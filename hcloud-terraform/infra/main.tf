@@ -41,7 +41,7 @@ provider "tailscale" {
 # No manual key management — Terraform handles it.
 
 resource "tailscale_tailnet_key" "research" {
-  reusable      = false
+  reusable      = true
   ephemeral     = true
   preauthorized = true
   description   = "hetzner-${var.vm_name}"
@@ -114,6 +114,10 @@ resource "hcloud_server" "research" {
   user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
     tailscale_authkey = tailscale_tailnet_key.research.key
     vm_name           = var.vm_name
+    repos_yaml        = file("${path.module}/../repos.yaml")
+    claude_md         = file("${path.module}/../CLAUDE.md")
+    work_on_cmd       = file("${path.module}/../commands/work-on.md")
+    init_script       = file("${path.module}/../init-ubuntu-vm.sh")
   })
 
   labels = {

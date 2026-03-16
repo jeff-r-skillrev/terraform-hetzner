@@ -2,16 +2,23 @@
 # =============================================================================
 # infra/cloud-init.yaml.tftpl
 #
-# Runs on first boot when use_snapshot = false (booting from base Ubuntu).
-# Does just enough to make the VM accessible and ready for the full init script.
-# The heavy lifting (Node.js, Claude Code, tmux config, etc.) is handled by
-# init-ubuntu-vm.sh which you run manually after first SSH in.
+# Runs on first boot when booting from base Ubuntu.
+# 1. Installs base packages + Tailscale
+# 2. Writes config files (repos.yaml, CLAUDE.md, commands/) from repo sources
+# 3. Runs init-ubuntu-vm.sh to install Node.js, Claude Code, gh, etc.
 #
-# If you're booting from a pre-baked snapshot, this file is not used.
+# All file contents are read by Terraform at apply time from the repo,
+# keeping the repo files as the single source of truth.
 # =============================================================================
 
 package_update: true
 package_upgrade: true
+
+# Prevent interactive prompts during package install/upgrade
+apt:
+  conf: |
+    Dpkg::Options { "--force-confdef"; "--force-confold"; };
+    APT::Get::Assume-Yes "true";
 
 packages:
   - curl
@@ -30,9 +37,28 @@ write_files:
       X11Forwarding no
       MaxAuthTries 3
 
+  - path: /root/repos.yaml
+    content: |
+      ${indent(6, repos_yaml)}
+
+  - path: /root/CLAUDE.md
+    content: |
+      ${indent(6, claude_md)}
+
+  - path: /root/.claude/commands/work-on.md
+    content: |
+      ${indent(6, work_on_cmd)}
+
+  - path: /root/init-ubuntu-vm.sh
+    permissions: "0755"
+    content: |
+      ${indent(6, init_script)}
+
 # Enable and configure UFW firewall at the OS level
 # (Hetzner's cloud firewall is the outer layer; this is defense in depth)
 runcmd:
+  - export DEBIAN_FRONTEND=noninteractive
+  - export NEEDRESTART_MODE=a
   - ufw default deny incoming
   - ufw default allow outgoing
   - ufw allow 22/tcp
@@ -43,9 +69,9 @@ runcmd:
   - systemctl restart ssh
   - systemctl enable fail2ban
   - systemctl start fail2ban
+  # Run the full init script (Node.js, Claude Code, gh, tmux, etc.)
+  - DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a /root/init-ubuntu-vm.sh
 
 final_message: |
-  Cloud-init complete. SSH in as root and run your init script:
-    ./init-ubuntu-vm.sh
-  Then snapshot the server:
-    hcloud server create-image --type snapshot <server-name>
+  Cloud-init complete. VM is fully provisioned.
+  SSH in and run: claude

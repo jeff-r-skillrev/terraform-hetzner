@@ -2,26 +2,60 @@
 # Ubuntu VM Initializer — sets up Node.js, git, gh, tmux, Tailscale, Claude Code
 set -euo pipefail
 
+# Prevent debconf dialogs from blocking in non-interactive cloud-init
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+
+# Ensure HOME is set (cloud-init may not set it)
+export HOME="${HOME:-/root}"
+
 NODE_MAJOR=22
 TMUX_SESSION="work"
 
 log() { echo ">>> $1"; }
 
+# Wait for any existing apt/dpkg locks (cloud-init, unattended-upgrades, etc.)
+wait_for_apt() {
+  local tries=0
+  while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock &>/dev/null; do
+    if (( tries++ >= 30 )); then
+      log "ERROR: apt lock held for over 5 minutes, giving up"
+      return 1
+    fi
+    log "Waiting for apt lock (attempt $tries/30)..."
+    sleep 10
+  done
+}
+
 GITHUB_EMAIL="${GITHUB_EMAIL:-user@host.com}"
 GITHUB_USERNAME="${GITHUB_USERNAME:-your-gh-userid}"
 
 # System packages
-log "Updating system and installing packages"
-sudo apt-get update
-sudo apt-get upgrade -y
+wait_for_apt
+log "Updating apt and installing packages"
+sudo apt-get update -y
 sudo apt-get install -y \
   curl git tmux unzip build-essential ca-certificates gnupg lsb-release htop jq wget
 
-# Node.js
+# Node.js via NodeSource (Ubuntu's default nodejs does not include npm)
 if ! command -v node &>/dev/null || [[ "$(node -v | tr -d 'v' | cut -d. -f1)" -lt "$NODE_MAJOR" ]]; then
-  log "Installing Node.js $NODE_MAJOR"
+  log "Installing Node.js $NODE_MAJOR via NodeSource"
+  # Remove Ubuntu's nodejs if present (it lacks npm)
+  sudo apt-get remove -y nodejs npm 2>/dev/null || true
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
   sudo apt-get install -y nodejs
+  hash -r
+fi
+# Verify npm is actually available
+if ! command -v npm &>/dev/null; then
+  log "ERROR: npm not found after Node.js install — NodeSource may have failed"
+  log "Falling back to direct Node.js binary install"
+  sudo apt-get remove -y nodejs 2>/dev/null || true
+  NODE_ARCH="$(dpkg --print-architecture)"
+  if [[ "$NODE_ARCH" == "amd64" ]]; then NODE_ARCH="x64"; fi
+  curl -fsSL "https://nodejs.org/dist/v${NODE_MAJOR}.0.0/node-v${NODE_MAJOR}.0.0-linux-${NODE_ARCH}.tar.xz" \
+    | sudo tar -xJ -C /usr/local --strip-components=1
+  hash -r
 fi
 log "Node $(node -v), npm $(npm -v)"
 
@@ -99,17 +133,17 @@ fi
 # Repo registry and global Claude instructions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ -f "$SCRIPT_DIR/repos.yaml" ]]; then
+if [[ -f "$SCRIPT_DIR/repos.yaml" && "$SCRIPT_DIR/repos.yaml" != "$HOME/repos.yaml" ]]; then
   log "Installing repo registry to ~/repos.yaml"
   cp "$SCRIPT_DIR/repos.yaml" "$HOME/repos.yaml"
 fi
 
-if [[ -f "$SCRIPT_DIR/CLAUDE.md" ]]; then
+if [[ -f "$SCRIPT_DIR/CLAUDE.md" && "$SCRIPT_DIR/CLAUDE.md" != "$HOME/CLAUDE.md" ]]; then
   log "Installing global CLAUDE.md to ~/CLAUDE.md"
   cp "$SCRIPT_DIR/CLAUDE.md" "$HOME/CLAUDE.md"
 fi
 
-if [[ -d "$SCRIPT_DIR/commands" ]]; then
+if [[ -d "$SCRIPT_DIR/commands" && "$SCRIPT_DIR/commands" != "$HOME/.claude/commands" ]]; then
   log "Installing global Claude commands to ~/.claude/commands/"
   mkdir -p "$HOME/.claude/commands"
   cp "$SCRIPT_DIR/commands/"*.md "$HOME/.claude/commands/"
