@@ -1,0 +1,51 @@
+#cloud-config
+# =============================================================================
+# infra/cloud-init.yaml.tftpl
+#
+# Runs on first boot when use_snapshot = false (booting from base Ubuntu).
+# Does just enough to make the VM accessible and ready for the full init script.
+# The heavy lifting (Node.js, Claude Code, tmux config, etc.) is handled by
+# init-ubuntu-vm.sh which you run manually after first SSH in.
+#
+# If you're booting from a pre-baked snapshot, this file is not used.
+# =============================================================================
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - git
+  - tmux
+  - htop
+  - ufw
+  - fail2ban
+
+# Harden SSH slightly
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-hardening.conf
+    content: |
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+      X11Forwarding no
+      MaxAuthTries 3
+
+# Enable and configure UFW firewall at the OS level
+# (Hetzner's cloud firewall is the outer layer; this is defense in depth)
+runcmd:
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw --force enable
+  # Install Tailscale and join tailnet
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - tailscale up --authkey=${tailscale_authkey} --hostname=${vm_name}
+  - systemctl restart ssh
+  - systemctl enable fail2ban
+  - systemctl start fail2ban
+
+final_message: |
+  Cloud-init complete. SSH in as root and run your init script:
+    ./init-ubuntu-vm.sh
+  Then snapshot the server:
+    hcloud server create-image --type snapshot <server-name>

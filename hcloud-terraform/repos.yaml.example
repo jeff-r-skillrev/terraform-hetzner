@@ -1,0 +1,25 @@
+# Repo Registry — known repositories for agentic workflows
+# This file lives at ~/repos.yaml on the VM.
+# Agents (claude-flow, spacebot, plain Claude Code, etc.) use it to
+# resolve natural-language repo references to clone URLs and metadata.
+#
+# Adding a repo: copy a block below and fill in the fields.
+#   name:           unique key used in this file
+#   aliases:        casual names the user might say
+#   url:            SSH clone URL
+#   path:           where it should live on the VM
+#   default_branch: branch to base feature branches on
+#   stack:          tech stack summary (helps the agent reason about the code)
+#   setup:          shell commands to run after first clone (optional)
+#   notes:          any guardrails or context the agent should know (optional)
+
+repos:
+  penguintech:
+    aliases: [ai-agent, cli, frontend]
+    url: git@github.com:your-org/your-repo.git
+    path: ~/your-repo
+    default_branch: master
+    stack: "Shell"
+    setup: "tofu init; tofu apply"
+    notes: ""
+

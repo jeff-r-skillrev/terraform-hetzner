@@ -1,0 +1,59 @@
+# =============================================================================
+# .gitignore
+# =============================================================================
+
+# ── Terraform ─────────────────────────────────────────────────────────────────
+
+# Local state — never commit (shared state lives in S3)
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Terraform working directories
+**/.terraform/
+**/.terraform.lock.hcl    # commit this if you want pinned provider versions
+                           # (recommended for teams — remove from gitignore then)
+
+# Crash logs
+crash.log
+crash.*.log
+
+# ── Secrets — NEVER commit these ──────────────────────────────────────────────
+
+# Your personal variable values (API tokens, SSH keys)
+terraform.auto.tfvars
+terraform.tfvars
+*.tfvars
+!*.tfvars.example          # but DO commit the .example files
+
+# SSH private keys
+*.pem
+*.key
+id_rsa
+id_ed25519
+!id_ed25519.pub            # public keys are fine to commit
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# ── OS / Editor ───────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# tf state and provider modules
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# ignore backend terraform state config (private)
+backend.tf
+
+# do not commit personal repo info
+repos.yaml
+
+
+.DS_Store

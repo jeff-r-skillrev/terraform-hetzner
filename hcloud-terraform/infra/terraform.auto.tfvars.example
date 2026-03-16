@@ -1,0 +1,30 @@
+# =============================================================================
+# infra/terraform.auto.tfvars.example
+#
+# Copy this to terraform.auto.tfvars and fill in your values.
+# terraform.auto.tfvars is gitignored — never commit it.
+# Each teammate has their own copy locally.
+# =============================================================================
+
+# Get from: console.hetzner.cloud → your project → Security → API Tokens
+hcloud_token = "....."
+
+# Your SSH public key — paste the full contents of ~/.ssh/id_ed25519.pub
+ssh_public_key = "ssh-ed25519 AAAA... you@yourmachine"
+
+# Your name — shows up as a label on the server
+owner_tag = "your-gh-userid"
+
+# Tailscale API key — generate at: login.tailscale.com/admin/settings/keys → API keys
+# This is NOT an auth key — Terraform uses it to auto-generate ephemeral auth keys.
+tailscale_api_key = "tskey-api-..."
+
+# Your tailnet name — find at: login.tailscale.com/admin/settings/general
+# Usually your email (e.g. "jeff@example.com") or org name.
+tailscale_tailnet = "your-tailnet"
+
+# Uncomment to change from defaults:
+# vm_name          = "claude-research"
+# server_type      = "cpx21"       # 2 vCPU shared, 4GB RAM, ~$5/mo
+# location         = "ash"         # Ashburn VA
+# use_reserved_ip  = false         # true to allocate a stable public IPv4

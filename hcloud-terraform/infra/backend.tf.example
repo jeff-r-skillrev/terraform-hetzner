@@ -1,0 +1,14 @@
+# =============================================================================
+# infra/backend.tf
+#
+# Share terraform state across teams (this is an example using an Azure blob)
+# =============================================================================
+
+terraform {
+  backend "azurerm" {
+    resource_group_name  = "my-tf-state-resgrp"
+    storage_account_name = "tfstate"
+    container_name       = "tfstate"
+    key                  = "hcloud-terraform/terraform.tfstate"
+  }
+}
