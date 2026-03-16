@@ -101,6 +101,7 @@ if [[ ! -f "$HOME/.tmux.conf" ]]; then
   cat > "$HOME/.tmux.conf" << 'EOF'
 set -g history-limit 50000
 set -g mouse on
+set -g set-clipboard on
 set -g base-index 1
 setw -g pane-base-index 1
 set -g status-interval 5
@@ -128,6 +129,45 @@ alias gs="git status"
 alias gp="git pushb"
 unset ANTHROPIC_API_KEY
 EOF
+fi
+
+# Login helper — remind user to authenticate gh/claude if needed
+if ! grep -q "# claude-flow-login-check" "$HOME/.bashrc" 2>/dev/null; then
+  log "Adding login auth check to ~/.bashrc"
+  cat >> "$HOME/.bashrc" << 'LOGINEOF'
+
+# claude-flow-login-check
+_auth_check() {
+  local needs_help=0
+  local steps=()
+  local i=1
+
+  if ! gh auth status &>/dev/null; then
+    steps+=("  $i. gh auth login")
+    ((i++))
+    needs_help=1
+  fi
+
+  if ! claude /status &>/dev/null 2>&1; then
+    steps+=("  $i. claude  (to authenticate)")
+    ((i++))
+    needs_help=1
+  fi
+
+  if [[ "$needs_help" -eq 1 ]]; then
+    steps+=("  $i. source ~/.bashrc && work")
+    echo ""
+    echo ">>> Setup complete! Installed: Node $(node -v), git $(git --version | cut -d' ' -f3), gh, tmux, claude, tailscale"
+    echo ">>> Next steps:"
+    for s in "${steps[@]}"; do
+      echo ">>> $s"
+    done
+    echo ""
+  fi
+}
+_auth_check
+unset -f _auth_check
+LOGINEOF
 fi
 
 # Repo registry and global Claude instructions
