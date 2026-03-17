@@ -23,6 +23,10 @@ terraform {
       source  = "tailscale/tailscale"
       version = "~> 0.17"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
   }
 }
 
@@ -128,6 +132,46 @@ resource "hcloud_server" "research" {
 
   lifecycle {
     prevent_destroy = false
+  }
+}
+
+# ── Reserved IP (optional) ────────────────────────────────────────────────────
+#
+# With Tailscale, MagicDNS handles identity — reserved IPs are optional.
+# Enable with use_reserved_ip = true if you still want a stable public IP.
+# Free when assigned to a server; €0.01/hr only if unassigned.
+
+# ── Copy SSH Private Key to VM ────────────────────────────────────────────────
+#
+# Securely copies your local SSH private key to the VM over SSH.
+# The key is transferred directly — never stored in Terraform state.
+# Needed for git clone over SSH, GitHub pushes, etc.
+
+resource "null_resource" "copy_ssh_key" {
+  depends_on = [hcloud_server.research]
+
+  triggers = {
+    server_id = hcloud_server.research.id
+  }
+
+  connection {
+    type        = "ssh"
+    host        = hcloud_server.research.ipv4_address
+    user        = "root"
+    private_key = file(pathexpand(var.ssh_private_key_path))
+    timeout     = "2m"
+  }
+
+  provisioner "file" {
+    source      = pathexpand(var.ssh_private_key_path)
+    destination = "/root/.ssh/id_ed25519"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "chmod 600 /root/.ssh/id_ed25519",
+      "ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null",
+    ]
   }
 }
 

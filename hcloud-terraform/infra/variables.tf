@@ -58,6 +58,12 @@ variable "tailscale_tailnet" {
   type        = string
 }
 
+variable "ssh_private_key_path" {
+  description = "Local path to your SSH private key. Used to copy the key to the VM for GitHub access (never stored in Terraform state)."
+  type        = string
+  default     = "~/.ssh/id_ed25519"
+}
+
 variable "use_reserved_ip" {
   description = "Allocate a stable public IPv4. With Tailscale, MagicDNS handles identity so this is optional."
   type        = bool
