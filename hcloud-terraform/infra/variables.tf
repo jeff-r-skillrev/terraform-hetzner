@@ -15,13 +15,13 @@ variable "vm_name" {
 }
 
 variable "server_type" {
-  description = "Hetzner server type. cpx21 = 2 vCPU shared, 4GB RAM, ~$5/mo."
+  description = "Hetzner server type"
   type        = string
   default     = "cpx21"
 
   validation {
-    condition     = contains(["cpx21", "cx22", "cx32", "cpx31"], var.server_type)
-    error_message = "Choose one of: cpx21 (budget), cx22 (2 vCPU/4GB), cx32 (8GB), cpx31 (dedicated 8GB)."
+    condition     = contains(["cpx21", "cax11"], var.server_type)
+    error_message = "Choose one of: cpx21 (budget x86) 2 vCPU shared, 4GB RAM, ~$5/mo, cax11 (budget ARM) 2 vCPU shared, 4GB RAM, ~$5/mo."
   }
 }
 

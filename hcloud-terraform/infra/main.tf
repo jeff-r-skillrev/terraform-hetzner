@@ -39,6 +39,16 @@ provider "tailscale" {
   tailnet = var.tailscale_tailnet
 }
 
+# ── Locals ──────────────────────────────────────────────────────────────────
+#
+# Workspace-aware naming: "default" workspace uses vm_name as-is,
+# other workspaces get "vm_name-workspace" to avoid Hetzner naming collisions.
+
+locals {
+  name_prefix = terraform.workspace == "default" ? var.vm_name : "${var.vm_name}-${terraform.workspace}"
+  ssh_key_id  = terraform.workspace == "default" ? hcloud_ssh_key.research[0].id : data.hcloud_ssh_key.research[0].id
+}
+
 # ── Tailscale Auth Key ────────────────────────────────────────────────────────
 #
 # Generates a single-use, ephemeral auth key on every apply.
@@ -48,14 +58,25 @@ resource "tailscale_tailnet_key" "research" {
   reusable      = true
   ephemeral     = true
   preauthorized = true
-  description   = "hetzner-${var.vm_name}"
+  description   = "hetzner-${local.name_prefix}"
 }
 
 # ── SSH Key ───────────────────────────────────────────────────────────────────
+#
+# Hetzner enforces uniqueness on the public key value, so we can only register
+# it once. Use a data source to look up the existing key by fingerprint.
+# The key must already exist in Hetzner (created by the default workspace or
+# uploaded via the console).
 
 resource "hcloud_ssh_key" "research" {
+  count      = terraform.workspace == "default" ? 1 : 0
   name       = "${var.vm_name}-key"
   public_key = var.ssh_public_key
+}
+
+data "hcloud_ssh_key" "research" {
+  count = terraform.workspace != "default" ? 1 : 0
+  name  = "${var.vm_name}-key"
 }
 
 # ── Firewall ──────────────────────────────────────────────────────────────────
@@ -66,7 +87,7 @@ resource "hcloud_ssh_key" "research" {
 # All outbound traffic allowed — needed for apt, npm, GitHub, claude.ai OAuth.
 
 resource "hcloud_firewall" "research" {
-  name = "${var.vm_name}-fw"
+  name = "${local.name_prefix}-fw"
 
   # SSH
   rule {
@@ -101,11 +122,11 @@ resource "hcloud_firewall" "research" {
 # ── Server ────────────────────────────────────────────────────────────────────
 
 resource "hcloud_server" "research" {
-  name        = var.vm_name
+  name        = local.name_prefix
   server_type = var.server_type
   image       = "ubuntu-24.04"
   location    = var.location
-  ssh_keys    = [hcloud_ssh_key.research.id]
+  ssh_keys    = [local.ssh_key_id]
 
   firewall_ids = [hcloud_firewall.research.id]
 
@@ -183,7 +204,7 @@ resource "null_resource" "copy_ssh_key" {
 
 resource "hcloud_primary_ip" "research" {
   count         = var.use_reserved_ip ? 1 : 0
-  name          = "${var.vm_name}-ip"
+  name          = "${local.name_prefix}-ip"
   type          = "ipv4"
   assignee_type = "server"
   location      = var.location
