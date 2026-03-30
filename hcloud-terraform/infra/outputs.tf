@@ -32,6 +32,16 @@ output "ssh_tailscale_command" {
   value       = "ssh root@${var.vm_name}"
 }
 
+output "volume_name" {
+  description = "Persistent volume name (survives VM rebuilds)"
+  value       = hcloud_volume.persist.name
+}
+
+output "volume_size" {
+  description = "Persistent volume size in GB"
+  value       = hcloud_volume.persist.size
+}
+
 output "init_command" {
   description = "Run this after VM is up to complete setup"
   value       = "scp init-ubuntu-vm.sh root@${hcloud_server.research.ipv4_address}:~/ && ssh root@${hcloud_server.research.ipv4_address} './init-ubuntu-vm.sh'"

@@ -156,11 +156,37 @@ resource "hcloud_server" "research" {
   }
 }
 
-# ── Reserved IP (optional) ────────────────────────────────────────────────────
+# ── Persistent Volume ─────────────────────────────────────────────────────────
 #
-# With Tailscale, MagicDNS handles identity — reserved IPs are optional.
-# Enable with use_reserved_ip = true if you still want a stable public IP.
-# Free when assigned to a server; €0.01/hr only if unassigned.
+# General-purpose block storage that survives VM destruction.
+# Mounted at /mnt/persist on the VM. Use subdirectories for each workload:
+#   /mnt/persist/spacebot/data  — Spacebot data
+#   /mnt/persist/config/        — repos.yaml, CLAUDE.md, etc.
+#
+# The volume is formatted on first attach (cloud-init) and preserved across
+# server rebuilds — only `terraform destroy` removes it.
+
+resource "hcloud_volume" "persist" {
+  name     = "${local.name_prefix}-persist"
+  size     = var.volume_size
+  location = var.location
+  format   = "ext4"
+
+  labels = {
+    purpose = "research"
+    owner   = var.owner_tag
+  }
+
+  lifecycle {
+    prevent_destroy = false
+  }
+}
+
+resource "hcloud_volume_attachment" "persist" {
+  volume_id = hcloud_volume.persist.id
+  server_id = hcloud_server.research.id
+  automount = true
+}
 
 # ── Copy SSH Private Key to VM ────────────────────────────────────────────────
 #

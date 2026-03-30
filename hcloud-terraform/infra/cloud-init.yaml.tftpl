@@ -69,6 +69,19 @@ runcmd:
   - systemctl restart ssh
   - systemctl enable fail2ban
   - systemctl start fail2ban
+  # Wait for the persistent volume to be attached and mounted by Hetzner automount
+  - |
+    for i in $(seq 1 30); do
+      mountpoint -q /mnt/persist && break
+      # Hetzner automount names the mount after the volume; symlink if needed
+      for d in /mnt/HC_Volume_*; do
+        [ -d "$d" ] && ln -sfn "$d" /mnt/persist && break 2
+      done
+      sleep 2
+    done
+  # Create directory structure on the persistent volume
+  - mkdir -p /mnt/persist/spacebot/data
+  - mkdir -p /mnt/persist/config
   # Run the full init script (Node.js, Claude Code, gh, tmux, etc.)
   - DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a /root/init-ubuntu-vm.sh
 

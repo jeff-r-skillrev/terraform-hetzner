@@ -64,6 +64,12 @@ variable "ssh_private_key_path" {
   default     = "~/.ssh/id_ed25519"
 }
 
+variable "volume_size" {
+  description = "Size in GB of the persistent volume mounted at /mnt/persist. Survives VM rebuilds."
+  type        = number
+  default     = 10
+}
+
 variable "use_reserved_ip" {
   description = "Allocate a stable public IPv4. With Tailscale, MagicDNS handles identity so this is optional."
   type        = bool
