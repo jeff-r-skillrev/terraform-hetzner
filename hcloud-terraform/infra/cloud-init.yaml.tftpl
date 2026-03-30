@@ -54,6 +54,15 @@ write_files:
     content: |
       ${indent(6, init_script)}
 
+  - path: /root/spacebot/docker-compose.yml
+    content: |
+      ${indent(6, spacebot_compose)}
+
+  - path: /root/spacebot/start.sh
+    permissions: "0755"
+    content: |
+      ${indent(6, spacebot_start)}
+
 # Enable and configure UFW firewall at the OS level
 # (Hetzner's cloud firewall is the outer layer; this is defense in depth)
 runcmd:
@@ -84,6 +93,8 @@ runcmd:
   - mkdir -p /mnt/persist/config
   # Run the full init script (Node.js, Claude Code, gh, tmux, etc.)
   - DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a /root/init-ubuntu-vm.sh
+  # Start spacebot (installs Docker, writes .env, docker compose up)
+  - /root/spacebot/start.sh
 
 final_message: |
   Cloud-init complete. VM is fully provisioned.

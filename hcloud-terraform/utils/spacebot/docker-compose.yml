@@ -1,0 +1,13 @@
+services:
+  spacebot:
+    image: ghcr.io/spacedriveapp/spacebot:latest
+    container_name: spacebot
+    restart: unless-stopped
+    ports:
+      - "19898:19898"
+    volumes:
+      - ${SPACEBOT_DATA:-./data}:/data
+    # environment:
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # Optional:
+      # - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}

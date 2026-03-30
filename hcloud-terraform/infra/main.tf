@@ -143,6 +143,8 @@ resource "hcloud_server" "research" {
     claude_md         = file("${path.module}/../CLAUDE.md")
     work_on_cmd       = file("${path.module}/../commands/work-on.md")
     init_script       = file("${path.module}/../init-ubuntu-vm.sh")
+    spacebot_compose  = file("${path.module}/../utils/spacebot/docker-compose.yml")
+    spacebot_start    = file("${path.module}/../utils/spacebot/start.sh")
   })
 
   labels = {
