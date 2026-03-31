@@ -24,7 +24,7 @@ tailscale_api_key = "tskey-api-..."
 tailscale_tailnet = "your-tailnet"
 
 # Uncomment to change from defaults:
-# vm_name          = "claude-research"
+# vm_name          = "spacebot"
 # server_type      = "cpx21"       # 2 vCPU shared, 4GB RAM, ~$5/mo
 # location         = "ash"         # Ashburn VA
 # use_reserved_ip  = false         # true to allocate a stable public IPv4

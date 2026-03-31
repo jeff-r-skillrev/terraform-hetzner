@@ -128,7 +128,7 @@ Tailscale, git (configured), and shell aliases. Takes ~3-5 minutes.
 
 Tailscale auto-joins your tailnet during cloud-init (before you even SSH in).
 After the init script completes, you can connect via MagicDNS:
-`ssh root@claude-research`.
+`ssh root@spacebot`.
 
 ### 1.7 Multi-instance with Terraform workspaces
 
@@ -315,7 +315,7 @@ VPN — no public IP or port exposure needed.
 In ShellFish:
 1. Tap **+** to add a new server
 2. Fill in:
-   - **Host**: your VM's Tailscale MagicDNS name (e.g., `claude-research`)
+   - **Host**: your VM's Tailscale MagicDNS name (e.g., `spacebot`)
    - **User**: `root`
    - **Port**: `22`
    - **Authentication**: SSH Key → select or import your key
@@ -505,7 +505,7 @@ terraform destroy
 terraform apply
 
 # SSH in via Tailscale as soon as cloud-init finishes
-ssh root@claude-research
+ssh root@spacebot
 ```
 
 ### Resize to a bigger server temporarily

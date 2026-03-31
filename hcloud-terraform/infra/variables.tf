@@ -9,9 +9,9 @@ variable "hcloud_token" {
 }
 
 variable "vm_name" {
-  description = "Name of the research VM. Also used as the Tailscale MagicDNS hostname."
+  description = "VM name. Also used as the Tailscale MagicDNS hostname and volume prefix."
   type        = string
-  default     = "claude-research"
+  default     = "spacebot"
 }
 
 variable "server_type" {

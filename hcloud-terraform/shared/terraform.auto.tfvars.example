@@ -10,6 +10,6 @@ hcloud_token = "your-hcloud-token-here"
 owner_tag    = "your-gh-userid"
 
 # Uncomment to change from defaults:
-# vm_name     = "claude-research"
+# vm_name     = "spacebot"
 # location    = "ash"
 # volume_size = 10
