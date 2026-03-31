@@ -1,0 +1,15 @@
+# =============================================================================
+# shared/terraform.auto.tfvars.example
+#
+# Copy to terraform.auto.tfvars and fill in your values,
+# or symlink the infra/ tfvars: ln -s ../infra/terraform.auto.tfvars .
+# Extra variables in the file are harmlessly ignored.
+# =============================================================================
+
+hcloud_token = "your-hcloud-token-here"
+owner_tag    = "your-gh-userid"
+
+# Uncomment to change from defaults:
+# vm_name     = "claude-research"
+# location    = "ash"
+# volume_size = 10
