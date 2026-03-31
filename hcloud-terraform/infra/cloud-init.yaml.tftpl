@@ -2,13 +2,8 @@
 # =============================================================================
 # infra/cloud-init.yaml.tftpl
 #
-# Runs on first boot when booting from base Ubuntu.
-# 1. Installs base packages + Tailscale
-# 2. Writes config files (repos.yaml, CLAUDE.md, commands/) from repo sources
-# 3. Runs init-ubuntu-vm.sh to install Node.js, Claude Code, gh, etc.
-#
-# All file contents are read by Terraform at apply time from the repo,
-# keeping the repo files as the single source of truth.
+# Runs on first boot. Installs Docker + Tailscale, mounts persistent volume,
+# and brings up the spacebot service via docker compose.
 # =============================================================================
 
 package_update: true
@@ -22,13 +17,11 @@ apt:
 
 packages:
   - curl
-  - git
   - tmux
-  - htop
   - ufw
   - fail2ban
 
-# Harden SSH slightly
+# Harden SSH
 write_files:
   - path: /etc/ssh/sshd_config.d/99-hardening.conf
     content: |
@@ -36,23 +29,6 @@ write_files:
       PasswordAuthentication no
       X11Forwarding no
       MaxAuthTries 3
-
-  - path: /root/repos.yaml
-    content: |
-      ${indent(6, repos_yaml)}
-
-  - path: /root/CLAUDE.md
-    content: |
-      ${indent(6, claude_md)}
-
-  - path: /root/.claude/commands/work-on.md
-    content: |
-      ${indent(6, work_on_cmd)}
-
-  - path: /root/init-ubuntu-vm.sh
-    permissions: "0755"
-    content: |
-      ${indent(6, init_script)}
 
   - path: /root/spacebot/docker-compose.yml
     content: |
@@ -63,8 +39,7 @@ write_files:
     content: |
       ${indent(6, spacebot_start)}
 
-# Enable and configure UFW firewall at the OS level
-# (Hetzner's cloud firewall is the outer layer; this is defense in depth)
+# Firewall (defense-in-depth behind Hetzner cloud firewall)
 runcmd:
   - export DEBIAN_FRONTEND=noninteractive
   - export NEEDRESTART_MODE=a
@@ -72,30 +47,24 @@ runcmd:
   - ufw default allow outgoing
   - ufw allow 22/tcp
   - ufw --force enable
-  # Install Tailscale and join tailnet
+  # Tailscale
   - curl -fsSL https://tailscale.com/install.sh | sh
   - tailscale up --authkey=${tailscale_authkey} --hostname=${vm_name}
   - systemctl restart ssh
   - systemctl enable fail2ban
   - systemctl start fail2ban
-  # Wait for the persistent volume to be attached and mounted by Hetzner automount
+  # Wait for the persistent volume (Hetzner automount)
   - |
     for i in $(seq 1 30); do
       mountpoint -q /mnt/persist && break
-      # Hetzner automount names the mount after the volume; symlink if needed
       for d in /mnt/HC_Volume_*; do
         [ -d "$d" ] && ln -sfn "$d" /mnt/persist && break 2
       done
       sleep 2
     done
-  # Create directory structure on the persistent volume
   - mkdir -p /mnt/persist/spacebot/data
-  - mkdir -p /mnt/persist/config
-  # Run the full init script (Node.js, Claude Code, gh, tmux, etc.)
-  - DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a /root/init-ubuntu-vm.sh
-  # Start spacebot (installs Docker, writes .env, docker compose up)
+  # Docker + spacebot
   - /root/spacebot/start.sh
 
 final_message: |
-  Cloud-init complete. VM is fully provisioned.
-  SSH in and run: claude
+  Cloud-init complete. Spacebot is running.

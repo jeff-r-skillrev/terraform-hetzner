@@ -1,14 +1,13 @@
 # =============================================================================
 # infra/main.tf
 #
-# Provisions a Hetzner Cloud research VM for Claude Flow / agentic coding.
-# Each `terraform apply` creates a fresh Ubuntu VM with Tailscale pre-configured.
+# Provisions a Hetzner Cloud VM to run spacebot via Docker Compose.
+# Tailscale for secure access, persistent volume for data.
 #
 # Prerequisites:
-#   - Run bootstrap/ once to create Azure storage backend
-#   - Set HCLOUD_TOKEN env var (or use .auto.tfvars — see variables.tf)
+#   - Run shared/ once to create the persistent volume
+#   - Set HCLOUD_TOKEN env var (or use .auto.tfvars)
 #   - Set TAILSCALE_API_KEY env var (or use .auto.tfvars)
-#   - Add your SSH public key to Hetzner console or let this config manage it
 # =============================================================================
 
 terraform {
@@ -22,10 +21,6 @@ terraform {
     tailscale = {
       source  = "tailscale/tailscale"
       version = "~> 0.17"
-    }
-    null = {
-      source  = "hashicorp/null"
-      version = "~> 3.2"
     }
   }
 }
@@ -81,10 +76,8 @@ data "hcloud_ssh_key" "research" {
 
 # ── Firewall ──────────────────────────────────────────────────────────────────
 #
-# Minimal surface: SSH inbound only (Phase 2: remove SSH rule, go Tailscale-only).
-# TODO: Once Tailscale is proven reliable, remove SSH rule for max security.
-#       Break-glass: re-add port 22 via Hetzner web console if needed.
-# All outbound traffic allowed — needed for apt, npm, GitHub, claude.ai OAuth.
+# Minimal surface: SSH inbound only.
+# All outbound allowed — needed for apt, Docker Hub, Tailscale.
 
 resource "hcloud_firewall" "research" {
   name = "${local.name_prefix}-fw"
@@ -135,21 +128,15 @@ resource "hcloud_server" "research" {
     ipv4         = var.use_reserved_ip ? hcloud_primary_ip.research[0].id : null
   }
 
-  # cloud-init installs base packages + Tailscale, then you run init-ubuntu-vm.sh.
   user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
     tailscale_authkey = tailscale_tailnet_key.research.key
     vm_name           = var.vm_name
-    repos_yaml        = file("${path.module}/../repos.yaml")
-    claude_md         = file("${path.module}/../CLAUDE.md")
-    work_on_cmd       = file("${path.module}/../commands/work-on.md")
-    init_script       = file("${path.module}/../init-ubuntu-vm.sh")
     spacebot_compose  = file("${path.module}/../utils/spacebot/docker-compose.yml")
     spacebot_start    = file("${path.module}/../utils/spacebot/start.sh")
   })
 
   labels = {
-    purpose = "research"
-    tool    = "claude-flow"
+    purpose = "spacebot"
     owner   = var.owner_tag
   }
 
@@ -158,70 +145,19 @@ resource "hcloud_server" "research" {
   }
 }
 
-# ── Persistent Volume ─────────────────────────────────────────────────────────
+# ── Persistent Volume (managed by shared/) ────────────────────────────────────
 #
-# General-purpose block storage that survives VM destruction.
-# Mounted at /mnt/persist on the VM. Use subdirectories for each workload:
-#   /mnt/persist/spacebot/data  — Spacebot data
-#   /mnt/persist/config/        — repos.yaml, CLAUDE.md, etc.
-#
-# The volume is formatted on first attach (cloud-init) and preserved across
-# server rebuilds — only `terraform destroy` removes it.
+# The volume lives in the shared/ config so it survives `terraform destroy`.
+# Spacebot data persists at /mnt/persist/spacebot/data.
 
-resource "hcloud_volume" "persist" {
-  name     = "${local.name_prefix}-persist"
-  size     = var.volume_size
-  location = var.location
-  format   = "ext4"
-
-  labels = {
-    purpose = "research"
-    owner   = var.owner_tag
-  }
-
-  lifecycle {
-    prevent_destroy = false
-  }
+data "hcloud_volume" "persist" {
+  name = "${var.vm_name}-persist"
 }
 
 resource "hcloud_volume_attachment" "persist" {
-  volume_id = hcloud_volume.persist.id
+  volume_id = data.hcloud_volume.persist.id
   server_id = hcloud_server.research.id
   automount = true
-}
-
-# ── Copy SSH Private Key to VM ────────────────────────────────────────────────
-#
-# Securely copies your local SSH private key to the VM over SSH.
-# The key is transferred directly — never stored in Terraform state.
-# Needed for git clone over SSH, GitHub pushes, etc.
-
-resource "null_resource" "copy_ssh_key" {
-  depends_on = [hcloud_server.research]
-
-  triggers = {
-    server_id = hcloud_server.research.id
-  }
-
-  connection {
-    type        = "ssh"
-    host        = hcloud_server.research.ipv4_address
-    user        = "root"
-    private_key = file(pathexpand(var.ssh_private_key_path))
-    timeout     = "2m"
-  }
-
-  provisioner "file" {
-    source      = pathexpand(var.ssh_private_key_path)
-    destination = "/root/.ssh/id_ed25519"
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "chmod 600 /root/.ssh/id_ed25519",
-      "ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null",
-    ]
-  }
 }
 
 # ── Reserved IP (optional) ────────────────────────────────────────────────────

@@ -33,16 +33,16 @@ output "ssh_tailscale_command" {
 }
 
 output "volume_name" {
-  description = "Persistent volume name (survives VM rebuilds)"
-  value       = hcloud_volume.persist.name
+  description = "Persistent volume name (managed by shared/)"
+  value       = data.hcloud_volume.persist.name
 }
 
 output "volume_size" {
   description = "Persistent volume size in GB"
-  value       = hcloud_volume.persist.size
+  value       = data.hcloud_volume.persist.size
 }
 
-output "init_command" {
-  description = "Run this after VM is up to complete setup"
-  value       = "scp init-ubuntu-vm.sh root@${hcloud_server.research.ipv4_address}:~/ && ssh root@${hcloud_server.research.ipv4_address} './init-ubuntu-vm.sh'"
+output "spacebot_url" {
+  description = "Spacebot service URL (accessible from your tailnet)"
+  value       = "http://${var.vm_name}:19898"
 }
