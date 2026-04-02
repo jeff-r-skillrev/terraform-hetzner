@@ -5,6 +5,11 @@ services:
     restart: unless-stopped
     ports:
       - "19898:19898"
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    cap_add:
+      - SYS_ADMIN
     volumes:
       - ${SPACEBOT_DATA:-./data}:/data
     # environment:
