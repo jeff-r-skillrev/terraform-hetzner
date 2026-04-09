@@ -16,3 +16,29 @@ services:
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       # Optional:
       # - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+
+  # Optional - configure spacebot via a convenient web browser UI
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: filebrowser
+    volumes:
+      - ${SPACEBOT_DATA:-./data}:/srv
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Optional MCP Servers — enable with: docker compose --profile mcp up -d
+  # ---------------------------------------------------------------------------
+
+  # # GitHub MCP Server (native Streamable HTTP transport)
+  # # Clients connect to http://github-mcp:8082/ with Authorization: Bearer <PAT>
+  # github-mcp:
+  #   image: ghcr.io/github/github-mcp-server:latest
+  #   container_name: github-mcp
+  #   profiles: ["mcp"]
+  #   command: ["http", "--port", "8082"]
+  #   ports:
+  #     - "8082:8082"
+  #   restart: unless-stopped
+
