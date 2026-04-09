@@ -57,3 +57,7 @@ repos.yaml
 
 
 .DS_Store
+dropbox.sh
+
+# spacebot local data (volume backups and dev data)
+hcloud-terraform/utils/spacebot/data/
