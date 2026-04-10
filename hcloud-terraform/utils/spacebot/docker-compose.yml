@@ -3,7 +3,7 @@ services:
     build: .
     image: spacebot-custom:latest
     container_name: spacebot
-    restart: unless-stopped
+    restart: on-failure
     ports:
       - "19898:19898"
     security_opt:
@@ -13,7 +13,6 @@ services:
       - SYS_ADMIN
     volumes:
       - ${SPACEBOT_DATA:-./data}:/data
-      - /var/run/docker.sock:/var/run/docker.sock
 
   # Optional - configure spacebot via a convenient web browser UI
   filebrowser:

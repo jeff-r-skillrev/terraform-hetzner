@@ -57,15 +57,26 @@ runcmd:
   - systemctl restart ssh
   - systemctl enable fail2ban
   - systemctl start fail2ban
-  # Wait for the persistent volume (Hetzner automount)
+  # Wait for the persistent volume (Hetzner automount, up to ~7.5 min)
   - |
-    for i in $(seq 1 30); do
-      mountpoint -q /mnt/persist && break
+    for i in $(seq 1 90); do
+      if mountpoint -q /mnt/persist 2>/dev/null; then
+        echo ">>> Volume mounted at /mnt/persist"
+        break
+      fi
       for d in /mnt/HC_Volume_*; do
-        [ -d "$d" ] && ln -sfn "$d" /mnt/persist && break 2
+        if [ -d "$d" ] && mountpoint -q "$d" 2>/dev/null; then
+          ln -sfn "$d" /mnt/persist
+          echo ">>> Symlinked $d -> /mnt/persist"
+          break 2
+        fi
       done
-      sleep 2
+      echo ">>> Waiting for volume... ($i/90)"
+      sleep 5
     done
+    if ! mountpoint -q /mnt/persist 2>/dev/null && [ ! -L /mnt/persist ]; then
+      echo "WARNING: volume not found after 7.5 min — spacebot data will be on ephemeral disk"
+    fi
   - mkdir -p /mnt/persist/spacebot/data
   # Docker + spacebot
   - /root/spacebot/start.sh
