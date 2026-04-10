@@ -1,6 +1,7 @@
 services:
   spacebot:
-    image: ghcr.io/spacedriveapp/spacebot:latest
+    build: .
+    image: spacebot-custom:latest
     container_name: spacebot
     restart: unless-stopped
     ports:
@@ -12,10 +13,7 @@ services:
       - SYS_ADMIN
     volumes:
       - ${SPACEBOT_DATA:-./data}:/data
-    # environment:
-      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      # Optional:
-      # - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - /var/run/docker.sock:/var/run/docker.sock
 
   # Optional - configure spacebot via a convenient web browser UI
   filebrowser:

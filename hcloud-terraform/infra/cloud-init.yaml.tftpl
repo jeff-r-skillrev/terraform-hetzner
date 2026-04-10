@@ -34,6 +34,10 @@ write_files:
     content: |
       ${indent(6, spacebot_compose)}
 
+  - path: /root/spacebot/Dockerfile
+    content: |
+      ${indent(6, spacebot_dockerfile)}
+
   - path: /root/spacebot/start.sh
     permissions: "0755"
     content: |

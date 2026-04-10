@@ -129,10 +129,11 @@ resource "hcloud_server" "research" {
   }
 
   user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    tailscale_authkey = tailscale_tailnet_key.research.key
-    vm_name           = var.vm_name
-    spacebot_compose  = file("${path.module}/../utils/spacebot/docker-compose.yml")
-    spacebot_start    = file("${path.module}/../utils/spacebot/start.sh")
+    tailscale_authkey    = tailscale_tailnet_key.research.key
+    vm_name              = var.vm_name
+    spacebot_compose     = file("${path.module}/../utils/spacebot/docker-compose.yml")
+    spacebot_start       = file("${path.module}/../utils/spacebot/start.sh")
+    spacebot_dockerfile  = file("${path.module}/../utils/spacebot/Dockerfile")
   })
 
   labels = {
