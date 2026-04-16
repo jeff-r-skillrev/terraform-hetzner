@@ -27,6 +27,7 @@ EOF
 # Start the service
 log "Starting spacebot"
 cd "$SCRIPT_DIR"
+docker compose build --pull
 docker compose up -d
 
 log "Spacebot running — data persisted at $SPACEBOT_DATA"
