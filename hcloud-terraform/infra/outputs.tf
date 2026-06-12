@@ -58,6 +58,31 @@ output "volume_size" {
   value       = data.hcloud_volume.persist.size
 }
 
+output "dns_record_setup" {
+  description = "DNS A record to create in Squarespace for stable endpoint"
+  value       = <<-EOT
+    Create this DNS record in Squarespace for vpn.skillrev.in:
+
+    Record Type:  A
+    Name:         vpn
+    Value:        ${local.server_ip}
+    TTL:          3600 (or lowest available)
+
+    Steps:
+    1. Go to squarespace.com → Domains → skillrev.in → DNS
+    2. Click "Add Record" → Type: A
+    3. Name: vpn
+    4. Value: ${local.server_ip}
+    5. Save
+
+    After DNS propagates (~5-30 min), all peer configs can use:
+      Endpoint = vpn.skillrev.in:${var.wg_server_port}
+
+    This allows you to scale/recreate the server without reissuing configs.
+    Just update the A record to the new IP.
+  EOT
+}
+
 output "wg_next_steps" {
   description = "Quick start guide for WireGuard"
   value       = <<-EOT
@@ -66,30 +91,32 @@ output "wg_next_steps" {
     Quick start:
     ───────────
 
-    1. Access the admin dashboard to add more peers:
-       ${local.server_ip} • port ${var.wg_server_port}/UDP
+    1. (OPTIONAL) Set up DNS for stable endpoint:
+       See output: dns_record_setup
+       This allows scaling later without breaking peer configs.
 
-       ${local.server_ip}:51821 (admin UI, localhost only)
+    2. Access the admin dashboard to add more peers:
        ssh -L 127.0.0.1:51821:127.0.0.1:51821 root@${local.server_ip}
        Then open: http://127.0.0.1:51821
 
-    2. Download the auto-generated admin config:
+    3. Download the auto-generated admin config:
        scp root@${local.server_ip}:/root/wireguard-admin.conf ./admin-wg0.conf
 
-    3. Import into your WireGuard client:
+    4. Import into your WireGuard client:
        - File → Import from file
        - Select admin-wg0.conf
        - Connect!
 
-    4. Home server (10.0.0.2) will:
+    5. Home server (10.0.0.2) will:
        - See the VPN and route via the Hetzner hub
        - Reach ollama on localhost:11434
        - Keep connection alive with PersistentKeepalive=25
 
-    5. Add India developers:
+    6. Add India developers:
        - Use admin dashboard to add peers
        - Set AllowedIPs = 10.0.0.2/32 for split tunnel
        - Issue each developer their .conf file
+       - If using vpn.skillrev.in, use that in their Endpoint
 
     VPN Network:
     ────────────

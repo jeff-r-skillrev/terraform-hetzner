@@ -148,6 +148,28 @@ Developers import the file into their WireGuard client and connect.
    docker logs wg-easy | tail -20
    ```
 
+### Using vpn.skillrev.in Instead of Raw IP
+
+If you set up the DNS A record in Squarespace, peers can use the domain name:
+
+```
+# Instead of this (raw IP):
+Endpoint = 1.2.3.4:51820
+
+# Use this (domain name):
+Endpoint = vpn.skillrev.in:51820
+```
+
+**Benefits:**
+- Scales without reissuing configs (just update DNS A record)
+- Easier to remember and share
+- More professional appearance
+
+When you recreate the VPS with a different IP, just:
+1. Get new IP from `terraform outputs`
+2. Update the DNS A record in Squarespace
+3. All peer configs work without changes (they resolve vpn.skillrev.in to the new IP)
+
 ### Peer Connected but Can't Reach Home Server
 
 1. Verify the home server is connected and has `10.0.0.2/32` as its IP:

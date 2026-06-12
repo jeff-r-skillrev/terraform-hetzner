@@ -102,6 +102,20 @@ This config is pre-generated and ready to use. It includes:
 - The server's public key
 - PersistentKeepalive=25 (keeps connection alive through NAT)
 
+### 3b. (Recommended) Set up DNS for stable endpoint
+
+Before distributing configs to developers, set up a DNS record so you can scale/recreate the server later without breaking everyone's configs:
+
+**In Squarespace (or your DNS provider):**
+1. Go to Domains → skillrev.in → DNS settings
+2. Add an A record:
+   - Name: `vpn`
+   - Value: `<your-vps-ip>` (from Terraform output)
+   - TTL: 3600
+3. Save and wait 5-30 minutes for propagation
+
+Now all peer configs can use `vpn.skillrev.in:51820` instead of the raw IP. If you ever need to scale up or migrate servers, just update the A record — no peer reconfigs needed.
+
 ### 4. Connect your home server
 
 **On Linux:**
