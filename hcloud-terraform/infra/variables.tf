@@ -48,7 +48,13 @@ variable "owner_tag" {
 }
 
 variable "wg_admin_password" {
-  description = "WireGuard admin panel password (plaintext; will be bcrypt-hashed in cloud-init)"
+  description = "WireGuard admin panel password (plaintext; used to generate hash)"
+  type        = string
+  sensitive   = true
+}
+
+variable "wg_admin_password_hash" {
+  description = "WireGuard admin panel password bcrypt hash (generate with: echo -n 'your-password' | mkpasswd -m bcrypt -R 10)"
   type        = string
   sensitive   = true
 }

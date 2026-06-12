@@ -116,8 +116,8 @@ resource "hcloud_server" "research" {
   }
 
   user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    wg_admin_password = var.wg_admin_password
-    wg_server_port    = var.wg_server_port
+    wg_admin_password_hash = var.wg_admin_password_hash
+    wg_server_port         = var.wg_server_port
   })
 
   labels = {

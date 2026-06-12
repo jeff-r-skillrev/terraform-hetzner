@@ -17,9 +17,14 @@ ssh_public_key = "ssh-ed25519 AAAA... you@yourmachine"
 # Your name — shows up as a label on the server
 owner_tag = "your-gh-userid"
 
-# WireGuard admin panel password (plaintext; will be bcrypt-hashed in cloud-init)
-# Choose a strong password — this protects the admin UI
-wg_admin_password = "choose-a-strong-password-here"
+# WireGuard admin panel password (plaintext reference; do not use)
+wg_admin_password = "your-password-here"
+
+# WireGuard admin panel password hash (bcrypt)
+# Generate the hash locally, then paste it here:
+#   echo -n "your-password-here" | mkpasswd -m bcrypt -R 10
+# Output will look like: $2b$10$abcdef...
+wg_admin_password_hash = "$2b$10$..."
 
 # Uncomment to change from defaults:
 # vm_name          = "wireguard-vpn"

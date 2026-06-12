@@ -42,7 +42,6 @@ write_files:
 
       export WG_DIR="/mnt/persist/wireguard"
       export WG_PORT="${wg_server_port}"
-      export ADMIN_PASS="${wg_admin_password}"
       export DOCKER_CONFIG_DIR="/root/.docker"
 
       echo ">>> [$(date +%T)] Starting WireGuard provisioning..."
@@ -73,9 +72,6 @@ write_files:
       mkdir -p $WG_DIR/{config,admin,logs}
       echo ">>> [$(date +%T)] Created WireGuard directories"
 
-      echo ">>> [$(date +%T)] Hashing admin password with bcrypt..."
-      PASS_HASH=$(mkpasswd -m bcrypt -R 10 <<< "$ADMIN_PASS")
-
       # Create docker-compose.yml
       cd $WG_DIR
       cat > docker-compose.yml << DCEOF
@@ -100,7 +96,7 @@ write_files:
             WG_DEFAULT_DNS: 1.1.1.1,8.8.8.8
             WG_ALLOWED_IPS: 10.0.0.0/24
             UI_LISTEN_PORT: 51821
-            PASSWORD_HASH: '${PASS_HASH}'
+            PASSWORD_HASH: '${wg_admin_password_hash}'
           volumes:
             - ./config:/etc/wireguard
             - ./logs:/var/log/wg-easy
