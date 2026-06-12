@@ -32,61 +32,54 @@ write_files:
       X11Forwarding no
       MaxAuthTries 3
 
-  # WireGuard provisioning script
+  # Main provisioning script
   - path: /root/provision-wireguard.sh
     permissions: "0755"
     content: |
-      #!/usr/bin/env bash
+      #!/bin/bash
       set -euo pipefail
 
-      WG_DIR="/mnt/persist/wireguard"
-      WG_PORT="${wg_server_port}"
-      ADMIN_PASS="${wg_admin_password}"
+      export WG_DIR="/mnt/persist/wireguard"
+      export WG_PORT="${wg_server_port}"
+      export ADMIN_PASS="${wg_admin_password}"
+      export DOCKER_CONFIG_DIR="/root/.docker"
 
-      log() { echo ">>> [$$(date +%T)] $1"; }
+      echo ">>> [$(date +%T)] Starting WireGuard provisioning..."
 
-      # Wait for persistent volume mount
-      wait_volume() {
-        for i in $$(seq 1 90); do
-          if mountpoint -q /mnt/persist 2>/dev/null; then
-            log "Volume mounted at /mnt/persist"
-            return 0
+      # Wait for persistent volume
+      echo ">>> [$(date +%T)] Waiting for persistent volume..."
+      for attempt in {1..90}; do
+        if mountpoint -q /mnt/persist 2>/dev/null; then
+          echo ">>> [$(date +%T)] Volume mounted at /mnt/persist"
+          break
+        fi
+        for d in /mnt/HC_Volume_*; do
+          if [ -d "$d" ] && mountpoint -q "$d" 2>/dev/null; then
+            ln -sfn "$d" /mnt/persist
+            echo ">>> [$(date +%T)] Symlinked $d -> /mnt/persist"
+            break 2
           fi
-          for d in /mnt/HC_Volume_*; do
-            if [ -d "$$d" ] && mountpoint -q "$$d" 2>/dev/null; then
-              ln -sfn "$$d" /mnt/persist
-              log "Symlinked $$d -> /mnt/persist"
-              return 0
-            fi
-          done
-          log "Waiting for volume ($${i}/90)..."
-          sleep 5
         done
-        log "ERROR: volume not found after 7.5 min — configs will be lost on teardown!"
-        return 1
-      }
+        echo ">>> [$(date +%T)] Waiting for volume ($attempt/90)..."
+        sleep 5
+      done
 
-      # Start docker if not running
+      # Start Docker
       systemctl start docker 2>/dev/null || true
       systemctl enable docker
 
-      # Wait for persistent volume
-      if ! wait_volume; then
-        log "WARNING: Continuing without persistent volume"
-      fi
-
       # Create WireGuard directories
-      mkdir -p $$WG_DIR/{config,admin,logs}
-      log "Created WireGuard directories at $$WG_DIR"
+      mkdir -p $WG_DIR/{config,admin,logs}
+      echo ">>> [$(date +%T)] Created WireGuard directories"
 
-      # Hash the admin password using bcrypt (mkpasswd from whois package)
-      PASS_HASH=$$(mkpasswd -m bcrypt -R 10 <<< "$$ADMIN_PASS")
-      log "Generated bcrypt hash for admin password"
+      # Hash password
+      echo ">>> [$(date +%T)] Hashing admin password..."
+      PASS_HASH=$(mkpasswd -m bcrypt -R 10 <<< "$ADMIN_PASS")
 
-      # Create docker-compose.yml for wg-easy
-      cat > $$WG_DIR/docker-compose.yml << DCEOF
+      # Create docker-compose.yml
+      cd $WG_DIR
+      cat > docker-compose.yml << DCEOF
       version: '3.8'
-
       services:
         wg-easy:
           image: ghcr.io/wg-easy/wg-easy:latest
@@ -101,131 +94,98 @@ write_files:
           environment:
             LANG: en
             WG_HOST: 0.0.0.0
-            WG_PORT: $$WG_PORT
+            WG_PORT: $${WG_PORT}
             WG_MTU: 1420
             WG_PERSISTENT_KEEPALIVE: 25
             WG_DEFAULT_DNS: 1.1.1.1,8.8.8.8
             WG_ALLOWED_IPS: 10.0.0.0/24
             UI_LISTEN_PORT: 51821
-            PASSWORD_HASH: $$PASS_HASH
+            PASSWORD_HASH: $${PASS_HASH}
           volumes:
             - ./config:/etc/wireguard
             - ./logs:/var/log/wg-easy
           ports:
             - "127.0.0.1:51821:51821/tcp"
-            - "$$WG_PORT:$$WG_PORT/udp"
+            - "$${WG_PORT}:$${WG_PORT}/udp"
       DCEOF
 
-      log "Created docker-compose.yml"
+      echo ">>> [$(date +%T)] Created docker-compose.yml"
 
-      # Start wg-easy container
-      cd $$WG_DIR
-      log "Starting wg-easy container..."
+      # Start wg-easy
+      echo ">>> [$(date +%T)] Starting wg-easy container..."
       docker compose up -d
 
-      # Wait for container to initialize and create wg0.json
-      log "Waiting for wg-easy to initialize..."
-      for i in $$(seq 1 30); do
-        if [ -f "$$WG_DIR/config/wg0.json" ]; then
-          log "wg0.json created, initialization complete"
+      # Wait for initialization
+      echo ">>> [$(date +%T)] Waiting for wg-easy initialization..."
+      for attempt in {1..30}; do
+        if [ -f "config/wg0.json" ]; then
+          echo ">>> [$(date +%T)] wg0.json created"
           break
-        fi
-        if [ $$i -eq 30 ]; then
-          log "WARNING: wg0.json not found after 60 seconds"
         fi
         sleep 2
       done
 
-      # Wait a bit more for server keys to be written
       sleep 5
 
-      # Extract server public key from the container
-      log "Extracting server public key..."
+      # Extract server public key
+      echo ">>> [$(date +%T)] Extracting server public key..."
       SERVER_PUBKEY=""
-      for attempt in $$(seq 1 5); do
-        SERVER_PUBKEY=$$(docker exec wg-easy cat /etc/wireguard/server_public.key 2>/dev/null || echo "")
-        if [ -n "$$SERVER_PUBKEY" ]; then
-          log "Server public key extracted"
+      for attempt in {1..5}; do
+        SERVER_PUBKEY=$(docker exec wg-easy cat /etc/wireguard/server_public.key 2>/dev/null || echo "")
+        if [ -n "$SERVER_PUBKEY" ]; then
+          echo ">>> [$(date +%T)] Got server public key"
           break
         fi
-        log "Attempt $${attempt}/5 to extract server public key..."
         sleep 2
       done
 
-      if [ -z "$$SERVER_PUBKEY" ]; then
-        log "WARNING: Could not extract server public key, admin config may be incomplete"
-        SERVER_PUBKEY="UNKNOWN"
-      fi
-
-      # Get the server's public IP
-      log "Fetching server public IP..."
+      # Get server IP
+      echo ">>> [$(date +%T)] Fetching server public IP..."
       SERVER_IP=""
-      for attempt in $$(seq 1 3); do
-        SERVER_IP=$$(curl -s http://checkip.amazonaws.com 2>/dev/null | tr -d '\n' || echo "")
-        if [ -n "$$SERVER_IP" ]; then
-          log "Server IP: $$SERVER_IP"
+      for attempt in {1..3}; do
+        SERVER_IP=$(curl -s http://checkip.amazonaws.com 2>/dev/null | tr -d '\n' || echo "")
+        if [ -n "$SERVER_IP" ]; then
+          echo ">>> [$(date +%T)] Server IP: $SERVER_IP"
           break
         fi
-        log "Attempt $${attempt}/3 to fetch server IP..."
         sleep 2
       done
 
-      if [ -z "$$SERVER_IP" ]; then
-        log "WARNING: Could not determine server public IP"
-        SERVER_IP="UNKNOWN"
-      fi
+      # Generate admin peer config
+      echo ">>> [$(date +%T)] Generating admin peer config..."
+      ADMIN_PRIVKEY=$(wg genkey)
 
-      # Generate admin peer private key (for the .conf file the user will download)
-      ADMIN_PRIVKEY=$$(wg genkey)
-      ADMIN_PUBKEY=$$(echo "$$ADMIN_PRIVKEY" | wg pubkey)
-
-      log "Generated admin peer keys"
-
-      # Create admin peer .conf file for download
-      mkdir -p $$WG_DIR/admin
-      cat > $$WG_DIR/admin/wg0.conf << CONFEOF
+      mkdir -p admin
+      cat > admin/wg0.conf << CONFEOF
       [Interface]
-      PrivateKey = $$ADMIN_PRIVKEY
+      PrivateKey = $ADMIN_PRIVKEY
       Address = 10.0.0.2/32
       DNS = 8.8.8.8, 1.1.1.1
 
       [Peer]
-      PublicKey = $$SERVER_PUBKEY
-      Endpoint = $$SERVER_IP:$$WG_PORT
+      PublicKey = $SERVER_PUBKEY
+      Endpoint = $SERVER_IP:$WG_PORT
       AllowedIPs = 10.0.0.0/24
       PersistentKeepalive = 25
       CONFEOF
 
-      chmod 600 $$WG_DIR/admin/wg0.conf
-      log "Created admin peer config: $$WG_DIR/admin/wg0.conf"
-
-      # Copy admin config to /root for easy SCP download
-      cp $$WG_DIR/admin/wg0.conf /root/wireguard-admin.conf
+      chmod 600 admin/wg0.conf
+      cp admin/wg0.conf /root/wireguard-admin.conf
       chmod 600 /root/wireguard-admin.conf
-      log "Copied to /root/wireguard-admin.conf for download"
 
-      # Log summary
-      log "========================================"
-      log "WireGuard setup complete!"
-      log "========================================"
-      log "Hub (Server):    10.0.0.1"
-      log "Admin (Home):    10.0.0.2 (auto-generated config)"
-      log "Endpoint:        $$SERVER_IP:$$WG_PORT"
-      log "Admin UI:        http://127.0.0.1:51821 (via SSH tunnel)"
-      log "========================================"
+      echo ">>> [$(date +%T)] WireGuard setup complete!"
+      echo ">>> [$(date +%T)] Hub: 10.0.0.1 | Admin: 10.0.0.2 | Endpoint: $SERVER_IP:$WG_PORT"
 
-  # Shell setup script
+  # Shell setup
   - path: /root/provision-shell.sh
     permissions: "0755"
     content: |
-      #!/usr/bin/env bash
+      #!/bin/bash
       set -euo pipefail
-
-      log() { echo ">>> $1"; }
 
       # tmux config
       if [[ ! -f /root/.tmux.conf ]]; then
-        log "Writing ~/.tmux.conf"
+        echo ">>> Writing ~/.tmux.conf"
         cat > /root/.tmux.conf << 'TMUXEOF'
       set -g history-limit 50000
       set -g mouse on
@@ -245,9 +205,9 @@ write_files:
       TMUXEOF
       fi
 
-      # Shell aliases and helpers
+      # Shell aliases
       if ! grep -q "# wireguard-helpers" /root/.bashrc 2>/dev/null; then
-        log "Adding WireGuard helpers to ~/.bashrc"
+        echo ">>> Adding WireGuard helpers to ~/.bashrc"
         cat >> /root/.bashrc << 'BASHEOF'
 
       # wireguard-helpers
@@ -259,7 +219,7 @@ write_files:
       BASHEOF
       fi
 
-      log "Shell setup complete"
+      echo ">>> Shell setup complete"
 
 runcmd:
   - export DEBIAN_FRONTEND=noninteractive
