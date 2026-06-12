@@ -1,13 +1,13 @@
 # =============================================================================
 # infra/main.tf
 #
-# Provisions a Hetzner Cloud VM to run spacebot via Docker Compose.
-# Tailscale for secure access, persistent volume for data.
+# Provisions a Hetzner Cloud VM running WireGuard VPN (via wg-easy).
+# Persistent volume stores VPN configurations across VM teardowns.
 #
 # Prerequisites:
 #   - Run shared/ once to create the persistent volume
 #   - Set HCLOUD_TOKEN env var (or use .auto.tfvars)
-#   - Set TAILSCALE_API_KEY env var (or use .auto.tfvars)
+#   - Set WG_ADMIN_PASSWORD env var (or use .auto.tfvars)
 # =============================================================================
 
 terraform {
@@ -18,20 +18,11 @@ terraform {
       source  = "hetznercloud/hcloud"
       version = "~> 1.47"
     }
-    tailscale = {
-      source  = "tailscale/tailscale"
-      version = "~> 0.17"
-    }
   }
 }
 
 provider "hcloud" {
   token = var.hcloud_token
-}
-
-provider "tailscale" {
-  api_key = var.tailscale_api_key
-  tailnet = var.tailscale_tailnet
 }
 
 # ── Locals ──────────────────────────────────────────────────────────────────
@@ -42,18 +33,6 @@ provider "tailscale" {
 locals {
   name_prefix = terraform.workspace == "default" ? var.vm_name : "${var.vm_name}-${terraform.workspace}"
   ssh_key_id  = terraform.workspace == "default" ? hcloud_ssh_key.research[0].id : data.hcloud_ssh_key.research[0].id
-}
-
-# ── Tailscale Auth Key ────────────────────────────────────────────────────────
-#
-# Generates a single-use, ephemeral auth key on every apply.
-# No manual key management — Terraform handles it.
-
-resource "tailscale_tailnet_key" "research" {
-  reusable      = true
-  ephemeral     = true
-  preauthorized = true
-  description   = "hetzner-${local.name_prefix}"
 }
 
 # ── SSH Key ───────────────────────────────────────────────────────────────────
@@ -76,17 +55,25 @@ data "hcloud_ssh_key" "research" {
 
 # ── Firewall ──────────────────────────────────────────────────────────────────
 #
-# Minimal surface: SSH inbound only.
-# All outbound allowed — needed for apt, Docker Hub, Tailscale.
+# Minimal surface: SSH + WireGuard inbound only.
+# All outbound allowed — needed for apt, Docker Hub, package downloads.
 
 resource "hcloud_firewall" "research" {
   name = "${local.name_prefix}-fw"
 
-  # SSH
+  # SSH (admin access)
   rule {
     direction = "in"
     protocol  = "tcp"
     port      = "22"
+    source_ips = ["0.0.0.0/0", "::/0"]
+  }
+
+  # WireGuard VPN
+  rule {
+    direction = "in"
+    protocol  = "udp"
+    port      = var.wg_server_port
     source_ips = ["0.0.0.0/0", "::/0"]
   }
 
@@ -129,15 +116,12 @@ resource "hcloud_server" "research" {
   }
 
   user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    tailscale_authkey    = tailscale_tailnet_key.research.key
-    vm_name              = var.vm_name
-    spacebot_compose     = file("${path.module}/../utils/spacebot/docker-compose.yml")
-    spacebot_start       = file("${path.module}/../utils/spacebot/start.sh")
-    spacebot_dockerfile  = file("${path.module}/../utils/spacebot/Dockerfile")
+    wg_admin_password = var.wg_admin_password
+    wg_server_port    = var.wg_server_port
   })
 
   labels = {
-    purpose = "spacebot"
+    purpose = "wireguard-vpn"
     owner   = var.owner_tag
   }
 
@@ -149,7 +133,7 @@ resource "hcloud_server" "research" {
 # ── Persistent Volume (managed by shared/) ────────────────────────────────────
 #
 # The volume lives in the shared/ config so it survives `terraform destroy`.
-# Spacebot data persists at /mnt/persist/spacebot/data.
+# WireGuard configs persist at /mnt/persist/wireguard/.
 
 data "hcloud_volume" "persist" {
   name = "${var.vm_name}-persist"

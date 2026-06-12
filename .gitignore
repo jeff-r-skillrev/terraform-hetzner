@@ -59,5 +59,11 @@ repos.yaml
 .DS_Store
 dropbox.sh
 
-# spacebot local data (volume backups and dev data)
-hcloud-terraform/utils/spacebot/data/
+# WireGuard configs and keys (downloaded locally, not committed)
+*.conf
+*.wg
+hcloud-terraform/utils/wireguard/config/
+hcloud-terraform/utils/wireguard/logs/
+hcloud-terraform/utils/wireguard/admin/
+*wireguard*.conf
+admin-wg0.conf

@@ -1,576 +1,425 @@
-# Hetzner Cloud Research VM
+# WireGuard VPN on Hetzner Cloud
 
-Terraform-managed Hetzner Cloud VM for remote agentic coding. Access from
-iPhone via Tailscale + Secure ShellFish, run Claude Code with your choice of
-agent orchestrator, push PR branches to GitHub, Bitbucket, etc (repo host agnostic).
+Terraform-managed WireGuard VPN server on Hetzner Cloud for secure, persistent access to home-based services (like Ollama) from remote locations (e.g., India). Hub-and-spoke topology with split tunneling for low bandwidth costs.
 
 ---
 
 ## Architecture Overview
 
 ```
-iPhone
-  ├── Tailscale app (VPN mesh)
-  └── Secure ShellFish (SSH client)
-        │
-        │  SSH over Tailscale (WireGuard)
-        ▼
-Hetzner Cloud VM  ──── ~$5/month ──────────────────────────────────
-  Ubuntu 24.04 x86                                                  │
-  2 vCPU · 4GB RAM (cpx21)                                          │
-                                                                     │
-  Tailscale ────► auto-joins tailnet, MagicDNS hostname             │
-  tmux session "work"                                                │
-  ├── window 1: agentic coding session                              │
-  ├── window 2: git / gh CLI / monitoring                           │
-  └── window 3: spare                                               │
-                                                                     │
-  Claude Code ──── OAuth ────► claude.ai (Pro subscription)         │
-  gh CLI ──── SSH ────────────► GitHub (PRs, branches)             │
-─────────────────────────────────────────────────────────────────────
+                    ┌─────────────────────────────────┐
+                    │  Hetzner Cloud VPS (Hub)        │
+                    │  • WireGuard on 51820/UDP       │
+                    │  • Internal IP: 10.0.0.1        │
+                    │  • wg-easy web UI: localhost    │
+                    │  • Cost: ~$5-10/month           │
+                    └────────────────┬────────────────┘
+                                     │ (VPN Tunnel)
+                    ┌────────────────┼────────────────┐
+                    │                │                │
+        ┌───────────▼────┐  ┌────────▼────────┐ ┌────▼──────────┐
+        │ Home Desktop   │  │ India Dev 1     │ │ India Dev 2   │
+        │ (Your House)   │  │ (Home Network)  │ │ (Home Network)│
+        │                │  │                 │ │               │
+        │ • IP: 10.0.0.2 │  │ • IP: 10.0.0.3  │ │ • IP: 10.0.0.4│
+        │ • Full tunnel  │  │ • Split tunnel  │ │ • Split tunnel│
+        │ • Persistent   │  │ • Auto-add      │ │ • Auto-add    │
+        │   Keepalive    │  │ • Only sees     │ │ • Only sees   │
+        │ • Ollama:11434 │  │   home server   │ │   home server │
+        └────────────────┘  └─────────────────┘ └───────────────┘
+        
+        Split tunnel = traffic for 10.0.0.2 goes via VPN,
+        everything else uses their local ISP (low cost, low latency)
 ```
 
-**Cost summary**
+**Cost Summary**
 
 | Item | Cost |
 |---|---|
-| Hetzner cpx21 VM (while running) | ~$5/month |
-| Hetzner Reserved IP | $0 while assigned to a server |
-| Hetzner Snapshot (~20GB) | ~$0.20/month |
-| S3 state bucket + DynamoDB lock | < $0.01/month |
-| Tailscale | $0 (free tier: up to 100 devices) |
-| Claude Pro (includes Claude Code) | $20/month (existing) |
-| Secure ShellFish (iOS SSH client) | $30 one-time |
-| GitHub | $0 (existing) |
-| **New ongoing spend** | **~$5/month** |
-
-When not in use, destroy the VM — cost drops to ~$0. The reserved IP and
-snapshot persist and cost almost nothing. Recreate in ~30 seconds from a
-snapshot, or ~5 minutes from scratch with `terraform apply`.
-
-Because of tailscale, keeping a particular IP address is less
-important. Tailscale's MagicDNS will connect you to the correct box.
+| Hetzner Cloud VM (cpx21: 2vCPU, 4GB RAM) | ~$5-10/month |
+| Persistent Block Storage (10-40GB) | ~$1-5/month |
+| Reserved IPv4 (stable endpoint) | $0 while attached |
+| **Total** | **~$6-15/month** |
 
 ---
 
-## Part 1 — Hetzner Cloud Infrastructure (Terraform)
+## Quick Start
 
-The infrastructure is fully automated with Terraform. Shared state is stored (if backend.tf is configured).
-
-### Directory structure
-
-```
-hcloud-terraform/
-├── bootstrap/          # Run ONCE to create S3 backend + DynamoDB lock table
-│   └── main.tf
-├── infra/              # The actual VM — run by anyone on the team
-│   ├── backend.tf      # S3, Azure, etc remote state config
-│   ├── main.tf         # Server, firewall, reserved IP
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── cloud-init.yaml # First-boot setup (used only when not using snapshot)
-│   └── terraform.auto.tfvars.example
-└── .gitignore
-```
-
-### 1.1 Prerequisites
+### Prerequisites
 
 - **Terraform** >= 1.6 — `brew install terraform`
-- **hcloud CLI** — `brew install hcloud`
-- **Hetzner Cloud API token** — console.hetzner.cloud → project → Security → API Tokens
-- **Tailscale account** — login.tailscale.com (free tier works)
-- **Tailscale API key** — login.tailscale.com/admin/settings/keys → API keys
-  (Terraform uses this to auto-generate ephemeral auth keys — no manual key management)
+- **Hetzner Cloud API token** — [console.hetzner.cloud](https://console.hetzner.cloud) → project → Security → API Tokens
 - **SSH key pair** — `ssh-keygen -t ed25519` (if you don't have one)
-- **AWS credentials** — for S3 backend state storage (one-time bootstrap)
-- **Azure CLI credentials** - for Azure blob backend state storage (one-time bootstrap)
+- **WireGuard client** — [wireguard.com/install](https://www.wireguard.com/install/)
 
-### 1.3 Configure variables
+### 1. Set up Terraform variables
 
 ```bash
 cd hcloud-terraform/infra
 cp terraform.auto.tfvars.example terraform.auto.tfvars
 ```
 
-Edit `terraform.auto.tfvars` and fill in:
+Edit `terraform.auto.tfvars`:
 
 ```hcl
-hcloud_token      = "your-hetzner-api-token"
-ssh_public_key    = "ssh-ed25519 AAAA... you@yourmachine"
-tailscale_api_key = "tskey-api-..."
-tailscale_tailnet = "your-tailnet"
-owner_tag         = "your-gh-userid"
+hcloud_token           = "your-hetzner-api-token"
+ssh_public_key         = "ssh-ed25519 AAAA... you@yourmachine"
+wg_admin_password      = "choose-a-strong-password"
+owner_tag              = "your-name"
+vm_name                = "wireguard-hub"
+server_type            = "cpx21"
+location               = "ash"  # or "hil" (US), "nbg1" (Germany), etc.
+use_reserved_ip        = true
+wg_server_port         = 51820
 ```
 
-### 1.4 Provision the VM
+### 2. Provision the VPN server
 
 ```bash
-terraform init      # pulls providers + connects to S3 backend
-terraform plan      # review what will be created
-terraform apply     # creates server, firewall, reserved IP
+terraform init
+terraform plan
+terraform apply
 ```
 
-Terraform outputs the server IP, SSH command, and Tailscale hostname.
+Terraform outputs:
+- `server_ip` — The VPS public IP
+- `wg_easy_admin_tunnel` — SSH command to access admin UI
+- `wg_config_download` — SCP command to download your peer config
+- `wireguard_endpoint` — Endpoint for client configs (e.g., `1.2.3.4:51820`)
+- `wg_next_steps` — Quick reference guide
 
-### 1.5 First-time setup
+### 3. Download your home server config
 
-After provisioning, copy and run the init script:
+After the VM is up (cloud-init takes ~3 minutes):
 
 ```bash
-# Terraform outputs the IP and a ready-to-use scp+ssh command
-scp init-ubuntu-vm.sh root@<server_ip>:~/
-ssh root@<server_ip>
-./init-ubuntu-vm.sh
+# Copy-paste the command from Terraform outputs
+scp root@<your-vps-ip>:/root/wireguard-admin.conf ./admin-wg0.conf
 ```
 
-The init script installs: Node.js 22, GitHub CLI, Claude Code, tmux (configured),
-Tailscale, git (configured), and shell aliases. Takes ~3-5 minutes.
+This config is pre-generated and ready to use. It includes:
+- Your internal VPN IP: `10.0.0.2`
+- The server's public key
+- PersistentKeepalive=25 (keeps connection alive through NAT)
 
-Tailscale auto-joins your tailnet during cloud-init (before you even SSH in).
-After the init script completes, you can connect via MagicDNS:
-`ssh root@spacebot`.
+### 4. Connect your home server
 
-### 1.7 Multi-instance with Terraform workspaces
-
-Each workspace is an independent instance with isolated state:
+**On Linux:**
 
 ```bash
-cd hcloud-terraform/infra
+# Install WireGuard if not already installed
+sudo apt install wireguard wireguard-tools
 
-# Create a second VM
-terraform workspace new vm-2
-terraform apply -var="vm_name=claude-vm-2"
+# Import the config
+sudo cp admin-wg0.conf /etc/wireguard/wg0.conf
+sudo chmod 600 /etc/wireguard/wg0.conf
 
-# Switch between instances
-terraform workspace select default    # your first VM
-terraform workspace select vm-2       # your second VM
+# Bring up the interface
+sudo wg-up wg0
+# or
+sudo wg-quick up ./admin-wg0.conf
 
-# Destroy just one instance
-terraform workspace select vm-2
-terraform destroy
+# Verify
+sudo wg show
 ```
 
-Each VM auto-registers in Tailscale with its `vm_name` as hostname.
+**On macOS/Windows/iOS/Android:**
+- Open WireGuard client
+- File → Import from file → Select `admin-wg0.conf`
+- Click **Activate**
 
----
-
-## Part 2 — What the Init Script Installs
-
-This script gets you the basics in place to have an AI agent
-capable of participating as a team-mate, pushing feature
-branches and so forth.
-
-- **System packages**: curl, git, tmux, build-essential, htop, jq, wget
-- **Node.js 22** via NodeSource
-- **GitHub CLI** (`gh`) via official apt repository
-- **Claude Code** (`claude`) via npm global install
-- **Tailscale** via official installer (auto-joins tailnet via cloud-init on first boot)
-- **tmux config** at `~/.tmux.conf` with mouse support, 50k scrollback,
-  sensible pane splits, and vim-style navigation
-- **Shell aliases** in `~/.bashrc`:
-  - `work` — attach to tmux session "work", or create it if new
-  - `ll` — `ls -lah`
-  - `gs` — `git status`
-  - `gp` — push current branch to origin without typing its name
-  - `unset ANTHROPIC_API_KEY` — safety line that prevents accidental API billing
-
-After the script finishes, run:
+### 5. Test the connection
 
 ```bash
-source ~/.bashrc
+# Your VPN IP should be 10.0.0.2
+ip addr show wg0
+
+# Ping the VPN hub
+ping 10.0.0.1
+
+# Ping from a remote developer (once they're added)
+ping 10.0.0.3
 ```
 
 ---
 
-## Part 3 — GitHub SSH Key Setup
+## Adding Remote Developers
 
-The VM needs its own SSH key registered with GitHub so it can clone repos
-and push branches.
+### Via Web Dashboard (Recommended)
 
-### 3.1 Generate the key
+1. Access the admin UI:
+   ```bash
+   # Copy-paste from Terraform outputs
+   ssh -L 127.0.0.1:51821:127.0.0.1:51821 root@<your-vps-ip>
+   ```
+   Then open **http://127.0.0.1:51821** in your browser
 
-```bash
-ssh-keygen -t ed25519 -C "your@email.com" -f ~/.ssh/github_ed25519 -N ""
-```
+2. Login with the password from `terraform.auto.tfvars`
 
-### 3.2 Configure SSH to use it for GitHub
+3. Click **"Add Peer"**:
+   - **Name**: `india-dev-alice`
+   - **Allowed IPs**: `10.0.0.3/32` (their VPN IP)
+   - Leave DNS and other fields at defaults
 
-```bash
-cat >> ~/.ssh/config << 'EOF'
+4. A QR code appears. Developer scans it with WireGuard mobile app, or you send them the downloaded `.conf` file securely.
 
-Host github.com
-  HostName github.com
-  User git
-  IdentityFile ~/.ssh/github_ed25519
-  AddKeysToAgent yes
-EOF
-chmod 600 ~/.ssh/config
-```
+### Split Tunnel (For Devs)
 
-### 3.3 Register the key with GitHub (or similar repo host)
+By default, all traffic goes through the VPN. For **split tunnel** (only Ollama traffic uses VPN):
 
-```bash
-cat ~/.ssh/github_ed25519.pub
-```
+1. Click **Edit** on the peer
+2. Change **AllowedIPs** from `10.0.0.0/24` to `10.0.0.2/32`
+3. **Update**
+4. Developer re-downloads the config
 
-Copy that entire line, then:
-1. Go to github.com → **Settings → SSH and GPG keys → New SSH key**
-2. Title: `hetzner-vm` (or anything descriptive)
-3. Paste the public key
-4. Click **Add SSH key**
-
-### 3.4 Test the connection
-
-```bash
-ssh -T git@github.com
-# Expected: "Hi yourusername! You've successfully authenticated..."
-```
+This ensures:
+- Devs' regular internet uses their local ISP (fast, cheap)
+- Only traffic destined for your home server (10.0.0.2) uses the Hetzner VPN
+- Ollama remains accessible from India via secure tunnel
 
 ---
 
-## Part 4 — GitHub CLI Authentication (optional)
+## Home Server Setup
 
-The `gh` CLI creates pull requests from the command line. It uses a
-Personal Access Token (PAT) for auth.
+Your home server (10.0.0.2) will connect 24x7 to the Hetzner hub. It needs to:
 
-### 4.1 Create a PAT
+1. **Run WireGuard** (see "Connect your home server" above)
 
-On GitHub: **Settings → Developer settings → Personal access tokens →
-Tokens (classic) → Generate new token**
+2. **Make Ollama accessible to VPN peers**:
+   ```bash
+   # On your home server, configure Ollama to listen on all interfaces
+   export OLLAMA_HOST=0.0.0.0:11434
+   ollama serve
+   
+   # Or set it in systemd service:
+   # /etc/systemd/system/ollama.service
+   # Environment="OLLAMA_HOST=0.0.0.0:11434"
+   ```
 
-Required scopes: `repo`, `workflow`, `read:org`
+3. **(Optional) Firewall India devs to Ollama only**:
+   ```bash
+   # Allow VPN subnet to reach Ollama, deny everything else
+   sudo ufw allow from 10.0.0.0/24 to any port 11434
+   sudo ufw deny to 127.0.0.1 port 11434  # Deny local to prevent accidental exposure
+   ```
 
-Copy the token — you won't see it again.
-
-### 4.2 Authenticate gh CLI
-
-```bash
-gh auth login
-```
-
-Walk through the prompts:
-- **Where do you use GitHub?** → GitHub.com
-- **What is your preferred protocol?** → SSH
-- **How would you like to authenticate?** → Paste an authentication token
-- Paste your PAT
-
-Verify it worked:
-
-```bash
-gh auth status
-```
+4. **Verify connectivity** from India:
+   ```bash
+   # From India dev's machine (after connecting to VPN)
+   curl http://10.0.0.2:11434/api/tags
+   ```
 
 ---
 
-## Part 5 — Claude Code Authentication
+## Managing the VPN
 
-Claude Code authenticates against your claude.ai Pro subscription via OAuth —
-no API key needed or wanted.
+### Common Tasks
 
-```bash
-claude
-```
-
-Claude Code will print a URL like:
-```
-Please visit: https://claude.ai/auth/cli?code=XXXXXXXX
-```
-
-Open that URL on any device (your laptop, phone, anything) and sign in with
-your claude.ai account. The session is saved on the VM and persists across
-reconnections.
-
-**Important:** Do not set `ANTHROPIC_API_KEY` anywhere. The init script
-adds `unset ANTHROPIC_API_KEY` to your `.bashrc` as a safety guard. If that
-variable exists, Claude Code silently switches to API billing and your Pro
-subscription is not used.
-
-Verify the auth worked:
-
-```bash
-claude --version
-# Should show version without prompting for login
-```
-
----
-
-## Part 6 — Secure ShellFish + Tailscale (iPhone Setup)
-
-### 6.1 Install Tailscale on your iPhone
-
-Install **Tailscale** from the App Store (free). Sign in with the same account
-you used for the API key. Your Hetzner VM(s) will appear
-automatically as devices on your tailnet.
-
-### 6.2 Install Secure ShellFish
-
-**Secure ShellFish** by Dag Ågren — $30 one-time purchase from the App Store.
-No subscription. Search "Secure ShellFish" or "ShellFish SSH".
-
-### 6.3 Add your VM as a host in ShellFish
-
-With Tailscale running on your iPhone, ShellFish connects over the Tailscale
-VPN — no public IP or port exposure needed.
-
-In ShellFish:
-1. Tap **+** to add a new server
-2. Fill in:
-   - **Host**: your VM's Tailscale MagicDNS name (e.g., `spacebot`)
-   - **User**: `root`
-   - **Port**: `22`
-   - **Authentication**: SSH Key → select or import your key
-3. Save and tap to connect
-
-For multiple VMs, add each one by its MagicDNS name (e.g., `claude-vm-1`,
-`claude-vm-2`). No IP addresses to manage.
-
-### 6.4 Keyboard setup for tmux
-
-ShellFish has a customizable extra keyboard row above the iOS keyboard. For
-tmux and Claude Code use, configure it to include:
-
-- `Ctrl` (essential for tmux prefix `Ctrl+b`)
-- `Esc`
-- `Tab`
-- `↑` `↓` `←` `→` arrow keys
-
-To send a tmux command on iPhone: tap **Ctrl**, tap **B**, then tap the
-next key. For example, to create a new window: **Ctrl** → **B** → **C**.
-
----
-
-## Part 7 — tmux Session Layout
-
-### 7.1 The `work` alias
-
-The init script added this alias:
-
-```bash
-alias work="tmux attach -t work 2>/dev/null || tmux new -s work"
-```
-
-Type `work` after connecting and you will always land in your persistent
-session, creating it fresh if this is the first time.
-
-### 7.2 Recommended window layout
-
-```
-tmux session: work
-├── window 1 [agents]   — agentic coding session
-├── window 2 [git]      — git status, gh pr, branch management
-└── window 3 [monitor]  — htop, logs, watching agent output
-```
-
-Create this layout once:
-
-```bash
-# You're in window 1 by default after `work`
-# Rename it
-Ctrl+b  ,   →  type "agents"  →  Enter
-
-# Create window 2
-Ctrl+b  c
-Ctrl+b  ,   →  type "git"     →  Enter
-
-# Create window 3
-Ctrl+b  c
-Ctrl+b  ,   →  type "monitor" →  Enter
-
-# Go back to window 1
-Ctrl+b  1
-```
-
-Switch between windows: `Ctrl+b` then the window number (`1`, `2`, `3`).
-
-### 7.3 Key tmux commands reference
-
-| Action | Keys |
+| Task | Command |
 |---|---|
-| Attach to session | `tmux attach -t work` (or just `work`) |
-| Detach (leave running) | `Ctrl+b  d` |
-| New window | `Ctrl+b  c` |
-| Switch to window N | `Ctrl+b  N` |
-| Rename window | `Ctrl+b  ,` |
-| Split pane vertically | `Ctrl+b  \|` |
-| Split pane horizontally | `Ctrl+b  -` |
-| Navigate panes | `Ctrl+b  h/j/k/l` |
-| Scroll mode (read agent output) | `Ctrl+b  [` then arrow keys, `q` to exit |
-| Kill current window | `Ctrl+b  &` |
-| List sessions | `tmux ls` |
-| Reload tmux config | `Ctrl+b  r` |
+| SSH to the VPS | `ssh root@<your-vps-ip>` |
+| Access admin UI | `ssh -L 127.0.0.1:51821:127.0.0.1:51821 root@<your-vps-ip>` → http://127.0.0.1:51821 |
+| View WireGuard status | `ssh root@<your-vps-ip> "docker exec wg-easy wg show"` |
+| View Docker logs | `ssh root@<your-vps-ip> "docker logs wg-easy"` |
+| Restart WireGuard | `ssh root@<your-vps-ip> "docker restart wg-easy"` |
+| Backup configs | `scp -r root@<your-vps-ip>:/mnt/persist/wireguard/ ./wireguard-backup/` |
+
+### Persistent Volume
+
+All WireGuard configs are stored on a persistent Hetzner volume at `/mnt/persist/wireguard/`. This means:
+
+- **Survives VM teardown**: Destroy and recreate the VM, configs persist
+- **Quick spinup**: VM comes back up with the same peer configs (no manual re-creation)
+- **Backup**: Configs are automatically isolated from the VM's ephemeral disk
+
+### Scaling Down / Destroying
+
+```bash
+terraform destroy
+```
+
+This removes the VM but **keeps the persistent volume**. Next time:
+
+```bash
+terraform apply
+```
+
+The VM comes back up in ~2-5 minutes with the same WireGuard configs (no re-configuration needed).
 
 ---
 
-## Part 8 — Daily Workflow
+## Architecture & File Structure
 
-### 8.1 Connect from iPhone
-
-1. Ensure Tailscale is connected on your iPhone (VPN toggle in Settings or the app)
-2. Open ShellFish
-3. Tap your VM host to connect
-4. Type `work` — you are in your tmux session
-
-### 8.2 Start an agentic coding task
-
-In window 1 (agents), navigate to your repo and start Claude Code:
-
-```bash
-cd ~/your-repo
-claude
+```
+hcloud-terraform/
+├── shared/                      # Persistent volume (survives VM teardowns)
+│   ├── main.tf
+│   ├── variables.tf
+│   └── outputs.tf
+│
+├── infra/                       # The WireGuard VPS (ephemeral)
+│   ├── main.tf                  # Server, firewall, IP allocation
+│   ├── variables.tf             # WireGuard-specific vars
+│   ├── outputs.tf               # Admin UI, config download, etc.
+│   ├── cloud-init.yaml.tftpl    # First-boot provisioning script
+│   │   └── Contains:
+│   │       • Docker installation
+│   │       • WireGuard key generation
+│   │       • wg-easy container startup
+│   │       • Admin peer auto-generation
+│   │       • Password hashing (bcrypt)
+│   └── terraform.auto.tfvars.example
+│
+├── utils/
+│   └── wireguard/
+│       └── README.md            # Detailed admin guide
+│
+└── .gitignore                   # Ignores .conf files, secrets, etc.
 ```
 
-Claude Code runs interactively. You can also use it in headless mode for
-longer-running tasks:
+### Terraform Workspaces (Multiple VPNs)
 
-```bash
-claude -p "Add rate limiting middleware to all API routes and write integration tests"
-```
-
-You can switch to window 3 (monitor) with `Ctrl+b 3` and watch output, or
-disconnect entirely — the task keeps running in tmux.
-
-### 8.3 Review changes and create a PR branch
-
-Switch to window 2 (git):
-
-```bash
-Ctrl+b  2
-cd ~/your-repo
-
-git diff
-git status
-
-git checkout -b feat/rate-limiting
-git add -A
-git commit -m "feat: add rate limiting middleware with integration tests"
-gp   # alias for: git push origin HEAD
-
-gh pr create \
-  --title "feat: add rate limiting middleware" \
-  --body "Implemented by Claude Code agentic session." \
-  --base main
-```
-
-`gh` will print the PR URL. Open it in Mobile Safari on your iPhone to review
-before merging.
-
----
-
-### Keep Claude Code updated
-
-```bash
-npm update -g @anthropic-ai/claude-code
-```
-
-### If Claude Code auth expires
-
-Sessions last a long time but do eventually expire. Re-authenticate with:
-
-```bash
-claude /logout
-claude
-# Open the new URL and sign in again
-```
-
-### VM disk space
-
-The cpx21 has 40GB of disk. Agent sessions don't produce much disk usage,
-but if you clone many large repos, check with:
-
-```bash
-df -h
-du -sh ~/*/
-```
-
-### Keeping the VM's OS updated
-
-Run periodically (safe to do in window 3 while agents run in window 1):
-
-```bash
-sudo apt update && sudo apt upgrade -y
-```
-
-### Destroying and recreating VMs
-
-With Tailscale, VMs are disposable. Terraform auto-generates a fresh
-Tailscale auth key on each apply:
+To run multiple WireGuard instances (e.g., one for US, one for EU):
 
 ```bash
 cd hcloud-terraform/infra
 
-# Destroy
-terraform destroy
+# Create a second VPN
+terraform workspace new vpn-eu
+terraform apply -var="vm_name=wg-eu" -var="location=nbg1"
 
-# Recreate (from snapshot ~30s, from scratch ~5 min)
-terraform apply
+# Switch between VPNs
+terraform workspace select default   # First VPN
+terraform workspace select vpn-eu    # Second VPN
 
-# SSH in via Tailscale as soon as cloud-init finishes
-ssh root@spacebot
-```
-
-### Resize to a bigger server temporarily
-
-Edit `server_type` in `terraform.auto.tfvars`, then:
-```bash
-terraform apply
+# Each has isolated state and separate Hetzner resources
 ```
 
 ---
 
-## Addendum — Agent Orchestrators
+## Security
 
-Claude Code is powerful on its own, but you can layer an agent orchestrator
-on top for multi-agent workflows. This VM setup is orchestrator-agnostic —
-here are some options that have been tested or are worth exploring:
+### Public Exposure
 
-### Claude Flow v3
+- **Port 51820/UDP** is open to the entire internet (required for VPN to work)
+- **Security model**: WireGuard uses cryptographic key exchange (Curve25519). Only peers with valid private keys can connect. No weak credentials or brute-force risk.
+- **Admin UI** is **not** exposed — only accessible on localhost via SSH tunnel
 
-[claude-flow](https://github.com/ruvnet/claude-flow) provides multi-agent
-swarms with a SPARC workflow (Specification, Pseudocode, Architecture,
-Refinement, Completion). It is initialized per repo, not globally.
+### Firewall Rules
 
-```bash
-cd ~/your-repo
-npx claude-flow@v3alpha init
+```
+Inbound:
+├── TCP 22 (SSH admin access) — from anywhere
+├── UDP 51820 (WireGuard) — from anywhere
+Outbound:
+└── All allowed (needed for apt, Docker Hub, etc.)
 ```
 
-This creates a `.claude/` directory with agent definitions, slash commands,
-and workflow components. Register it as an MCP server to give Claude Code
-access to its tools natively:
+### Best Practices
+
+1. **Backup admin password**: Store `wg_admin_password` securely (not in git)
+2. **Rotate keys periodically**: Delete/re-add peers as developers churn
+3. **Monitor logs**: `docker logs wg-easy` on the VPS
+4. **Update regularly**: `terraform apply` picks up security patches automatically (cloud-init)
+
+---
+
+## Troubleshooting
+
+### Can't connect to admin UI
+
+1. Verify SSH tunnel is open:
+   ```bash
+   lsof -i :51821
+   ```
+   If nothing, the tunnel dropped. Re-run the SSH command.
+
+2. Check wg-easy container is running:
+   ```bash
+   ssh root@<your-vps-ip> "docker ps | grep wg-easy"
+   ```
+
+3. Verify password is correct (check `terraform.auto.tfvars`)
+
+### Peer can't connect
+
+1. Check firewall rule for UDP 51820:
+   ```bash
+   ssh root@<your-vps-ip> "sudo ufw status | grep 51820"
+   ```
+
+2. Verify peer config has correct `Endpoint`:
+   ```bash
+   # Should be the VPS public IP from Terraform outputs
+   grep "Endpoint" ./admin-wg0.conf
+   ```
+
+3. Test from VPS:
+   ```bash
+   ssh root@<your-vps-ip> "docker exec wg-easy wg show"
+   ```
+
+### Peer can't reach home server
+
+1. Ensure home server is connected with `10.0.0.2`:
+   ```bash
+   # On home server
+   ip addr show wg0
+   ```
+
+2. Verify Ollama is listening:
+   ```bash
+   # On home server
+   ss -tlnp | grep 11434
+   ```
+
+3. Test from India dev:
+   ```bash
+   # After connecting to VPN
+   ping 10.0.0.2
+   curl http://10.0.0.2:11434/api/tags
+   ```
+
+---
+
+## Costs & Cleanup
+
+### Ongoing Costs
+
+- Hetzner VM: ~$5-10/month (running)
+- Persistent volume: ~$1-5/month (always)
+- Reserved IP: $0 (while attached)
+- **Total**: ~$6-15/month
+
+### Pause or Destroy
+
+If you don't need the VPN for a while:
 
 ```bash
-claude mcp add claude-flow -- npx -y claude-flow@latest mcp start
-claude mcp list   # verify
+# Stop the server (keep volume + IP)
+terraform destroy
+# Cost drops to ~$1-5/month (volume only)
+
+# Spin it back up whenever
+terraform apply
+# VM back in 2-5 minutes, configs intact
 ```
 
-Run a task:
+---
 
-```bash
-npx claude-flow@v3alpha --agent coder \
-  --task "Add rate limiting middleware to all API routes"
-```
+## Documentation
 
-Or use the structured SPARC workflow for larger tasks:
+- **Admin Guide**: [`hcloud-terraform/utils/wireguard/README.md`](hcloud-terraform/utils/wireguard/README.md) — Adding peers, managing configs, troubleshooting
+- **Terraform Code**: [`hcloud-terraform/infra/`](hcloud-terraform/infra/) — Variable definitions, outputs, provisioning logic
+- **WireGuard Protocol**: [wireguard.com](https://www.wireguard.com/) — General WireGuard documentation
+- **wg-easy**: [github.com/wg-easy/wg-easy](https://github.com/wg-easy/wg-easy) — Docker image we use
 
-```bash
-npx claude-flow@v3alpha /sparc "Refactor auth module to support OAuth2"
-```
+---
 
-Update claude-flow:
+## Support
 
-```bash
-npx claude-flow@v3alpha init upgrade --add-missing
-```
-
-### Other orchestrators
-
-Any orchestrator that works with Claude Code or the Anthropic API can run
-on this VM. The key requirements are:
-
-- Runs on Linux x86_64 (Ubuntu 24.04)
-- Can authenticate via Claude Code OAuth or an API key
-- Works within a tmux session (no GUI required)
-
-Examples worth evaluating: Claude's built-in `/claude-code-agent-sdk`,
-custom MCP tool servers, shell-based agent scripts, or any framework that
-can drive Claude Code in headless mode.
+For issues with:
+- **Terraform**: Check variable names, ensure `terraform.auto.tfvars` is set correctly
+- **WireGuard connection**: See "Troubleshooting" above
+- **wg-easy UI**: See admin guide in [`hcloud-terraform/utils/wireguard/README.md`](hcloud-terraform/utils/wireguard/README.md)
+- **Hetzner**: [hetzner.com/support](https://www.hetzner.com/support)

@@ -9,9 +9,9 @@ variable "hcloud_token" {
 }
 
 variable "vm_name" {
-  description = "VM name. Also used as the Tailscale MagicDNS hostname and volume prefix."
+  description = "VM name and WireGuard peer identifier. Also used as volume prefix."
   type        = string
-  default     = "spacebot"
+  default     = "wireguard-hub"
 }
 
 variable "server_type" {
@@ -47,19 +47,25 @@ variable "owner_tag" {
   default     = "your-gh-userid"
 }
 
-variable "tailscale_api_key" {
-  description = "Tailscale API key for auto-generating auth keys. Generate at: login.tailscale.com/admin/settings/keys → API keys"
+variable "wg_admin_password" {
+  description = "WireGuard admin panel password (plaintext; will be bcrypt-hashed in cloud-init)"
   type        = string
   sensitive   = true
 }
 
-variable "tailscale_tailnet" {
-  description = "Your Tailscale tailnet name (e.g. 'yourname@gmail.com' or your org name). Find at: login.tailscale.com/admin/settings/general"
-  type        = string
+variable "wg_server_port" {
+  description = "WireGuard server port (UDP)"
+  type        = number
+  default     = 51820
+
+  validation {
+    condition     = var.wg_server_port > 1024 && var.wg_server_port <= 65535
+    error_message = "WireGuard port must be between 1025 and 65535."
+  }
 }
 
 variable "use_reserved_ip" {
-  description = "Allocate a stable public IPv4. With Tailscale, MagicDNS handles identity so this is optional."
+  description = "Allocate a stable public IPv4 for WireGuard endpoint."
   type        = bool
-  default     = false
+  default     = true
 }

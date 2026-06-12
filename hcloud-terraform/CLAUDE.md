@@ -1,36 +1,84 @@
-# Research VM — Global Instructions
+# WireGuard VPN on Hetzner — Instructions
 
-These instructions apply to all work on this VM regardless of which
-directory you are in or which orchestration framework is running.
+This branch automates a **WireGuard VPN** server on Hetzner Cloud for secure remote access to home-based services (e.g., Ollama). Unlike the main branch (which is for agentic coding), this branch is **infrastructure-only**.
 
-## Repo Registry
+## Scope
 
-A YAML file at ~/repos.yaml lists every known repository with clone URLs,
-aliases, tech stack, and setup instructions. When the user mentions a repo
-by name or alias, look it up there.
+This terraform configuration:
+- **Creates**: A Hetzner Cloud VPS running WireGuard via wg-easy Docker container
+- **Provides**: Hub-and-spoke VPN for home server + remote developers
+- **Stores**: Configs on persistent volume (survives VM teardowns)
 
-### Workflow when the user asks you to work on a repo
+This terraform configuration does **NOT**:
+- Clone or manage user repositories
+- Install development tools (Node.js, GitHub CLI, etc.)
+- Run agentic coding sessions
 
-0. (pre-check) Verify sufficient disk space is available (df -h; du -sh ~/*/)
-1. Parse the user's request to identify which repo they mean (match against
-   `name` and `aliases` in ~/repos.yaml).
-2. Check if the repo is already cloned at its `path`. If not, clone it.
-3. `cd` into the repo directory.
-4. If `setup` is defined and hasn't been run yet (e.g., no `node_modules/`),
-   run the setup commands.
-5. If the orchestration framework in use needs per-repo initialization
-   (e.g., `npx claude-flow@v3alpha init`, spacebot init, etc.), check if
-   that's been done and run it if not.
-6. Create a feature branch off `default_branch` for the work.
-7. Do the work.
-8. Commit, push, and create a PR via `gh pr create`. If gh is not setup, simplly push the branch and notify the user.
+## Prerequisites
+
+Before applying Terraform, ensure you have:
+
+1. **Hetzner Cloud account** with valid API token
+2. **SSH key** to authenticate with the VPS
+3. **WireGuard client** installed locally (for testing after deployment)
+4. **Terraform >= 1.6** installed locally
+
+## Workflow
+
+When working on this terraform:
+
+1. **Before apply**: Always run `terraform plan` and review changes
+2. **Password management**: `wg_admin_password` should be stored in `terraform.auto.tfvars` (gitignored)
+3. **Network changes**: If modifying firewall rules, test them in a test workspace first:
+   ```bash
+   terraform workspace new test
+   terraform apply -var-file=terraform.auto.tfvars
+   # Test, then destroy
+   terraform destroy
+   terraform workspace select default
+   ```
+4. **Backup configs**: Before destroying, backup `/mnt/persist/wireguard/`:
+   ```bash
+   scp -r root@<vps-ip>:/mnt/persist/wireguard/ ./backup/
+   ```
+5. **Multi-region**: Use workspaces to manage multiple VPN instances (e.g., US, EU):
+   ```bash
+   terraform workspace new vpn-eu
+   terraform apply -var="location=nbg1"
+   ```
+
+## Directory Structure
+
+```
+hcloud-terraform/
+├── shared/          # Persistent volume (managed separately, survives VM teardowns)
+├── infra/           # Hetzner VM + WireGuard + firewall
+└── utils/wireguard/ # Admin guide + documentation
+```
+
+- **shared/**: Manages the persistent Hetzner volume. Apply this once and **leave it alone**.
+- **infra/**: The VPN server itself. Can be destroyed and recreated (configs survive on the volume).
 
 ## Rules
 
-- Never commit directly to `main` (or whatever `default_branch` is).
-- Always create a feature branch with a descriptive name.
-- Read `notes` for each repo before taking action — some repos have
-  guardrails (e.g., don't run terraform apply without approval).
-- Push branches and open PRs via `gh pr create`.
-- If the repo has its own CLAUDE.md, follow those instructions too —
-  they take precedence over these global ones for repo-specific concerns.
+- **Never modify `shared/`** after initial apply — it has `prevent_destroy = true`.
+- **Backup before destroy**: Always backup `/mnt/persist/wireguard/` if you're destroying the VPS.
+- **Test firewall changes** in a workspace before applying to production.
+- **Update documentation** in `hcloud-terraform/utils/wireguard/README.md` when adding new peers or features.
+- **Use terraform.auto.tfvars** for secrets (gitignored). Never commit passwords or API keys.
+
+## Common Tasks
+
+| Task | Command |
+|---|---|
+| **Stand up the VPN** | `cd hcloud-terraform/infra && terraform apply` |
+| **Tear down (keep volume)** | `terraform destroy` |
+| **Access admin UI** | `ssh -L 127.0.0.1:51821:127.0.0.1:51821 root@<vps-ip>` |
+| **Add a new peer** | Via admin UI or `hcloud-terraform/utils/wireguard/README.md` |
+| **Backup configs** | `scp -r root@<vps-ip>:/mnt/persist/wireguard/ ./backup/` |
+
+## Documentation
+
+- **Main guide**: [`README.md`](../../README.md) — Overview, quick start, troubleshooting
+- **Admin guide**: [`utils/wireguard/README.md`](utils/wireguard/README.md) — Adding peers, managing configs
+- **WireGuard protocol**: [wireguard.com](https://www.wireguard.com/)

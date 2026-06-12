@@ -2,14 +2,13 @@
 # =============================================================================
 # infra/cloud-init.yaml.tftpl
 #
-# Runs on first boot. Installs Docker + Tailscale, mounts persistent volume,
-# and brings up the spacebot service via docker compose.
+# WireGuard VPN server provisioning via wg-easy (Docker container).
+# Sets up persistent storage, generates admin peer config, and enables admin UI.
 # =============================================================================
 
 package_update: true
 package_upgrade: true
 
-# Prevent interactive prompts during package install/upgrade
 apt:
   conf: |
     Dpkg::Options { "--force-confdef"; "--force-confold"; };
@@ -20,9 +19,12 @@ packages:
   - tmux
   - ufw
   - fail2ban
+  - whois
+  - docker.io
+  - docker-compose
 
-# Harden SSH
 write_files:
+  # SSH hardening
   - path: /etc/ssh/sshd_config.d/99-hardening.conf
     content: |
       PermitRootLogin prohibit-password
@@ -30,56 +32,265 @@ write_files:
       X11Forwarding no
       MaxAuthTries 3
 
-  - path: /root/spacebot/docker-compose.yml
-    content: |
-      ${indent(6, spacebot_compose)}
-
-  - path: /root/spacebot/Dockerfile
-    content: |
-      ${indent(6, spacebot_dockerfile)}
-
-  - path: /root/spacebot/start.sh
+  # WireGuard provisioning script
+  - path: /root/provision-wireguard.sh
     permissions: "0755"
     content: |
-      ${indent(6, spacebot_start)}
+      #!/usr/bin/env bash
+      set -euo pipefail
 
-# Firewall (defense-in-depth behind Hetzner cloud firewall)
+      WG_DIR="/mnt/persist/wireguard"
+      WG_PORT="${wg_server_port}"
+      ADMIN_PASS="${wg_admin_password}"
+
+      log() { echo ">>> [$$(date +%T)] $1"; }
+
+      # Wait for persistent volume mount
+      wait_volume() {
+        for i in $$(seq 1 90); do
+          if mountpoint -q /mnt/persist 2>/dev/null; then
+            log "Volume mounted at /mnt/persist"
+            return 0
+          fi
+          for d in /mnt/HC_Volume_*; do
+            if [ -d "$$d" ] && mountpoint -q "$$d" 2>/dev/null; then
+              ln -sfn "$$d" /mnt/persist
+              log "Symlinked $$d -> /mnt/persist"
+              return 0
+            fi
+          done
+          log "Waiting for volume ($${i}/90)..."
+          sleep 5
+        done
+        log "ERROR: volume not found after 7.5 min — configs will be lost on teardown!"
+        return 1
+      }
+
+      # Start docker if not running
+      systemctl start docker 2>/dev/null || true
+      systemctl enable docker
+
+      # Wait for persistent volume
+      if ! wait_volume; then
+        log "WARNING: Continuing without persistent volume"
+      fi
+
+      # Create WireGuard directories
+      mkdir -p $$WG_DIR/{config,admin,logs}
+      log "Created WireGuard directories at $$WG_DIR"
+
+      # Hash the admin password using bcrypt (mkpasswd from whois package)
+      PASS_HASH=$$(mkpasswd -m bcrypt -R 10 <<< "$$ADMIN_PASS")
+      log "Generated bcrypt hash for admin password"
+
+      # Create docker-compose.yml for wg-easy
+      cat > $$WG_DIR/docker-compose.yml << DCEOF
+      version: '3.8'
+
+      services:
+        wg-easy:
+          image: ghcr.io/wg-easy/wg-easy:latest
+          container_name: wg-easy
+          restart: unless-stopped
+          cap_add:
+            - NET_ADMIN
+            - SYS_MODULE
+          sysctls:
+            - net.ipv4.ip_forward=1
+            - net.ipv4.conf.all.src_valid_mark=1
+          environment:
+            LANG: en
+            WG_HOST: 0.0.0.0
+            WG_PORT: $$WG_PORT
+            WG_MTU: 1420
+            WG_PERSISTENT_KEEPALIVE: 25
+            WG_DEFAULT_DNS: 1.1.1.1,8.8.8.8
+            WG_ALLOWED_IPS: 10.0.0.0/24
+            UI_LISTEN_PORT: 51821
+            PASSWORD_HASH: $$PASS_HASH
+          volumes:
+            - ./config:/etc/wireguard
+            - ./logs:/var/log/wg-easy
+          ports:
+            - "127.0.0.1:51821:51821/tcp"
+            - "$$WG_PORT:$$WG_PORT/udp"
+      DCEOF
+
+      log "Created docker-compose.yml"
+
+      # Start wg-easy container
+      cd $$WG_DIR
+      log "Starting wg-easy container..."
+      docker compose up -d
+
+      # Wait for container to initialize and create wg0.json
+      log "Waiting for wg-easy to initialize..."
+      for i in $$(seq 1 30); do
+        if [ -f "$$WG_DIR/config/wg0.json" ]; then
+          log "wg0.json created, initialization complete"
+          break
+        fi
+        if [ $$i -eq 30 ]; then
+          log "WARNING: wg0.json not found after 60 seconds"
+        fi
+        sleep 2
+      done
+
+      # Wait a bit more for server keys to be written
+      sleep 5
+
+      # Extract server public key from the container
+      log "Extracting server public key..."
+      SERVER_PUBKEY=""
+      for attempt in $$(seq 1 5); do
+        SERVER_PUBKEY=$$(docker exec wg-easy cat /etc/wireguard/server_public.key 2>/dev/null || echo "")
+        if [ -n "$$SERVER_PUBKEY" ]; then
+          log "Server public key extracted"
+          break
+        fi
+        log "Attempt $${attempt}/5 to extract server public key..."
+        sleep 2
+      done
+
+      if [ -z "$$SERVER_PUBKEY" ]; then
+        log "WARNING: Could not extract server public key, admin config may be incomplete"
+        SERVER_PUBKEY="UNKNOWN"
+      fi
+
+      # Get the server's public IP
+      log "Fetching server public IP..."
+      SERVER_IP=""
+      for attempt in $$(seq 1 3); do
+        SERVER_IP=$$(curl -s http://checkip.amazonaws.com 2>/dev/null | tr -d '\n' || echo "")
+        if [ -n "$$SERVER_IP" ]; then
+          log "Server IP: $$SERVER_IP"
+          break
+        fi
+        log "Attempt $${attempt}/3 to fetch server IP..."
+        sleep 2
+      done
+
+      if [ -z "$$SERVER_IP" ]; then
+        log "WARNING: Could not determine server public IP"
+        SERVER_IP="UNKNOWN"
+      fi
+
+      # Generate admin peer private key (for the .conf file the user will download)
+      ADMIN_PRIVKEY=$$(wg genkey)
+      ADMIN_PUBKEY=$$(echo "$$ADMIN_PRIVKEY" | wg pubkey)
+
+      log "Generated admin peer keys"
+
+      # Create admin peer .conf file for download
+      mkdir -p $$WG_DIR/admin
+      cat > $$WG_DIR/admin/wg0.conf << CONFEOF
+      [Interface]
+      PrivateKey = $$ADMIN_PRIVKEY
+      Address = 10.0.0.2/32
+      DNS = 8.8.8.8, 1.1.1.1
+
+      [Peer]
+      PublicKey = $$SERVER_PUBKEY
+      Endpoint = $$SERVER_IP:$$WG_PORT
+      AllowedIPs = 10.0.0.0/24
+      PersistentKeepalive = 25
+      CONFEOF
+
+      chmod 600 $$WG_DIR/admin/wg0.conf
+      log "Created admin peer config: $$WG_DIR/admin/wg0.conf"
+
+      # Copy admin config to /root for easy SCP download
+      cp $$WG_DIR/admin/wg0.conf /root/wireguard-admin.conf
+      chmod 600 /root/wireguard-admin.conf
+      log "Copied to /root/wireguard-admin.conf for download"
+
+      # Log summary
+      log "========================================"
+      log "WireGuard setup complete!"
+      log "========================================"
+      log "Hub (Server):    10.0.0.1"
+      log "Admin (Home):    10.0.0.2 (auto-generated config)"
+      log "Endpoint:        $$SERVER_IP:$$WG_PORT"
+      log "Admin UI:        http://127.0.0.1:51821 (via SSH tunnel)"
+      log "========================================"
+
+  # Shell setup script
+  - path: /root/provision-shell.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      log() { echo ">>> $1"; }
+
+      # tmux config
+      if [[ ! -f /root/.tmux.conf ]]; then
+        log "Writing ~/.tmux.conf"
+        cat > /root/.tmux.conf << 'TMUXEOF'
+      set -g history-limit 50000
+      set -g mouse on
+      set -g set-clipboard on
+      set -g base-index 1
+      setw -g pane-base-index 1
+      set -g status-interval 5
+      set -g status-left "#[fg=green][#S] "
+      set -g status-right "#[fg=yellow]%H:%M %d-%b"
+      bind | split-window -h -c "#{pane_current_path}"
+      bind - split-window -v -c "#{pane_current_path}"
+      bind h select-pane -L
+      bind j select-pane -D
+      bind k select-pane -U
+      bind l select-pane -R
+      bind r source-file ~/.tmux.conf \; display "Config reloaded!"
+      TMUXEOF
+      fi
+
+      # Shell aliases and helpers
+      if ! grep -q "# wireguard-helpers" /root/.bashrc 2>/dev/null; then
+        log "Adding WireGuard helpers to ~/.bashrc"
+        cat >> /root/.bashrc << 'BASHEOF'
+
+      # wireguard-helpers
+      alias work="tmux attach -t work 2>/dev/null || tmux new -s work"
+      alias ll="ls -lah"
+      alias wg-logs="docker logs -f wg-easy"
+      alias wg-restart="docker restart wg-easy"
+      alias wg-status="docker ps -a | grep wg-easy"
+      BASHEOF
+      fi
+
+      log "Shell setup complete"
+
 runcmd:
   - export DEBIAN_FRONTEND=noninteractive
   - export NEEDRESTART_MODE=a
+
+  # System hardening
   - ufw default deny incoming
   - ufw default allow outgoing
   - ufw allow 22/tcp
+  - ufw allow ${wg_server_port}/udp
+  - ufw allow 51821/tcp
   - ufw --force enable
-  # Tailscale
-  - curl -fsSL https://tailscale.com/install.sh | sh
-  - tailscale up --authkey=${tailscale_authkey} --hostname=${vm_name}
   - systemctl restart ssh
   - systemctl enable fail2ban
   - systemctl start fail2ban
-  # Wait for the persistent volume (Hetzner automount, up to ~7.5 min)
-  - |
-    for i in $(seq 1 90); do
-      if mountpoint -q /mnt/persist 2>/dev/null; then
-        echo ">>> Volume mounted at /mnt/persist"
-        break
-      fi
-      for d in /mnt/HC_Volume_*; do
-        if [ -d "$d" ] && mountpoint -q "$d" 2>/dev/null; then
-          ln -sfn "$d" /mnt/persist
-          echo ">>> Symlinked $d -> /mnt/persist"
-          break 2
-        fi
-      done
-      echo ">>> Waiting for volume... ($i/90)"
-      sleep 5
-    done
-    if ! mountpoint -q /mnt/persist 2>/dev/null && [ ! -L /mnt/persist ]; then
-      echo "WARNING: volume not found after 7.5 min — spacebot data will be on ephemeral disk"
-    fi
-  - mkdir -p /mnt/persist/spacebot/data
-  # Docker + spacebot
-  - /root/spacebot/start.sh
+
+  # WireGuard provisioning
+  - /root/provision-wireguard.sh
+
+  # Shell setup
+  - /root/provision-shell.sh
 
 final_message: |
-  Cloud-init complete. Spacebot is running.
+  Cloud-init complete. WireGuard server is running.
+
+  Next steps:
+  1. Access admin UI:
+     ssh -L 127.0.0.1:51821:127.0.0.1:51821 root@<server-ip>
+     Then open http://127.0.0.1:51821
+
+  2. Download admin client config:
+     scp root@<server-ip>:/root/wireguard-admin.conf ./
+
+  3. Import the .conf into your WireGuard client and connect!
