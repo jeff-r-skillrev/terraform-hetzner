@@ -11,7 +11,7 @@ variable "hcloud_token" {
 variable "vm_name" {
   description = "Base name used for shared resource naming (e.g. volume = vm_name-persist)."
   type        = string
-  default     = "spacebot"
+  default     = "wireguard-vpn"
 }
 
 variable "location" {

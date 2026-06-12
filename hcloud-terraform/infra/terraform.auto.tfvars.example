@@ -22,7 +22,7 @@ owner_tag = "your-gh-userid"
 wg_admin_password = "choose-a-strong-password-here"
 
 # Uncomment to change from defaults:
-# vm_name          = "wireguard-hub"
+# vm_name          = "wireguard-vpn"
 # server_type      = "cpx21"       # 2 vCPU shared, 4GB RAM, ~$5-10/mo
 # location         = "ash"         # ash=Ashburn VA, hil=Hillsboro OR, nbg1=Nuremberg, fsn1=Falkenstein
 # use_reserved_ip  = true          # Allocate a stable public IPv4 (recommended for VPN endpoint)

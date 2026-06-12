@@ -147,7 +147,7 @@ resource "hcloud_volume_attachment" "persist" {
 
 # ── Reserved IP (optional) ────────────────────────────────────────────────────
 #
-# With Tailscale, MagicDNS handles identity — reserved IPs are optional.
+# If Tailscale, then MagicDNS handles identity — reserved IPs are optional.
 # Enable with use_reserved_ip = true if you still want a stable public IP.
 # Free when assigned to a server; €0.01/hr only if unassigned.
 

@@ -10,6 +10,6 @@ hcloud_token = "your-hcloud-token-here"
 owner_tag    = "your-gh-userid"
 
 # Uncomment to change from defaults:
-# vm_name     = "spacebot"
+# vm_name     = "wireguard-vpn"
 # location    = "ash"
 # volume_size = 10

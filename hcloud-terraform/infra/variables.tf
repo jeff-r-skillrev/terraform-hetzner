@@ -11,7 +11,7 @@ variable "hcloud_token" {
 variable "vm_name" {
   description = "VM name and WireGuard peer identifier. Also used as volume prefix."
   type        = string
-  default     = "wireguard-hub"
+  default     = "wireguard-vpn"
 }
 
 variable "server_type" {
