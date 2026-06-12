@@ -20,6 +20,7 @@ packages:
   - ufw
   - fail2ban
   - whois
+  - wireguard-tools
   - docker.io
   - docker-compose
 
@@ -113,7 +114,7 @@ write_files:
 
       # Start wg-easy
       echo ">>> [$(date +%T)] Starting wg-easy container..."
-      docker compose up -d
+      docker-compose up -d
 
       # Wait for initialization
       echo ">>> [$(date +%T)] Waiting for wg-easy initialization..."
@@ -142,8 +143,11 @@ write_files:
       # Get server IP
       echo ">>> [$(date +%T)] Fetching server public IP..."
       SERVER_IP=""
-      for attempt in {1..3}; do
-        SERVER_IP=$(curl -s http://checkip.amazonaws.com 2>/dev/null | tr -d '\n' || echo "")
+      for attempt in {1..5}; do
+        SERVER_IP=$(curl -s http://checkip.amazonaws.com 2>/dev/null | tr -d '\n' || \
+                    curl -s http://icanhazip.com 2>/dev/null | tr -d '\n' || \
+                    curl -s http://ifconfig.me 2>/dev/null | tr -d '\n' || \
+                    echo "")
         if [ -n "$SERVER_IP" ]; then
           echo ">>> [$(date +%T)] Server IP: $SERVER_IP"
           break
@@ -160,7 +164,7 @@ write_files:
       [Interface]
       PrivateKey = $ADMIN_PRIVKEY
       Address = 10.0.0.2/32
-      DNS = 8.8.8.8, 1.1.1.1
+      DNS = 1.1.1.1,8.8.8.8
 
       [Peer]
       PublicKey = $SERVER_PUBKEY
