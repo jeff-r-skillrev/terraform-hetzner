@@ -101,7 +101,7 @@ write_files:
             WG_DEFAULT_DNS: 1.1.1.1,8.8.8.8
             WG_ALLOWED_IPS: 10.0.0.0/24
             UI_LISTEN_PORT: 51821
-            PASSWORD_HASH: $${PASS_HASH}
+            PASSWORD_HASH: "$${PASS_HASH}"
           volumes:
             - ./config:/etc/wireguard
             - ./logs:/var/log/wg-easy
