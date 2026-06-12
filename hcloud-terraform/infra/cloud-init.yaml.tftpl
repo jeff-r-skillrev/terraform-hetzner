@@ -73,7 +73,8 @@ write_files:
       mkdir -p $WG_DIR/{config,admin,logs}
       echo ">>> [$(date +%T)] Created WireGuard directories"
 
-      echo ">>> [$(date +%T)] Admin password will be hashed by wg-easy..."
+      echo ">>> [$(date +%T)] Hashing admin password with bcrypt..."
+      PASS_HASH=$(mkpasswd -m bcrypt -R 10 <<< "$ADMIN_PASS")
 
       # Create docker-compose.yml
       cd $WG_DIR
@@ -99,7 +100,7 @@ write_files:
             WG_DEFAULT_DNS: 1.1.1.1,8.8.8.8
             WG_ALLOWED_IPS: 10.0.0.0/24
             UI_LISTEN_PORT: 51821
-            PASSWORD: "$${ADMIN_PASS}"
+            PASSWORD_HASH: '${PASS_HASH}'
           volumes:
             - ./config:/etc/wireguard
             - ./logs:/var/log/wg-easy
