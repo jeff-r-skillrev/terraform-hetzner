@@ -16,6 +16,7 @@ apt:
 
 packages:
   - curl
+  - jq
   - tmux
   - ufw
   - fail2ban
@@ -133,9 +134,9 @@ write_files:
       SERVER_PUBKEY=""
       for attempt in {1..5}; do
         if [ -f "config/wg0.json" ]; then
-          SERVER_PUBKEY=$(grep -o '"publicKey":"[^"]*"' config/wg0.json | cut -d'"' -f4)
-          if [ -n "$SERVER_PUBKEY" ]; then
-            echo ">>> [$(date +%T)] Got server public key"
+          SERVER_PUBKEY=$(jq -r '.server.publicKey' config/wg0.json 2>/dev/null)
+          if [ -n "$SERVER_PUBKEY" ] && [ "$SERVER_PUBKEY" != "null" ]; then
+            echo ">>> [$(date +%T)] Got server public key: $SERVER_PUBKEY"
             break
           fi
         fi
