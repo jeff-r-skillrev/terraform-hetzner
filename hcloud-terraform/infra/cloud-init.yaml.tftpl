@@ -72,8 +72,13 @@ write_files:
       mkdir -p $WG_DIR/{config,admin,logs}
       echo ">>> [$(date +%T)] Created WireGuard directories"
 
-      # Create docker-compose.yml
+      # Create .env file with password hash (avoids docker-compose interpolation)
       cd $WG_DIR
+      cat > .env << 'ENVEOF'
+      PASSWORD_HASH=${wg_admin_password_hash}
+      ENVEOF
+
+      # Create docker-compose.yml
       cat > docker-compose.yml << DCEOF
       version: '3.8'
       services:
@@ -96,7 +101,7 @@ write_files:
             WG_DEFAULT_DNS: 1.1.1.1,8.8.8.8
             WG_ALLOWED_IPS: 10.0.0.0/24
             UI_LISTEN_PORT: 51821
-            PASSWORD_HASH: '${wg_admin_password_hash}'
+          env_file: .env
           volumes:
             - ./config:/etc/wireguard
             - ./logs:/var/log/wg-easy
@@ -123,14 +128,16 @@ write_files:
 
       sleep 5
 
-      # Extract server public key
+      # Extract server public key from wg0.json
       echo ">>> [$(date +%T)] Extracting server public key..."
       SERVER_PUBKEY=""
       for attempt in {1..5}; do
-        SERVER_PUBKEY=$(docker exec wg-easy cat /etc/wireguard/server_public.key 2>/dev/null || echo "")
-        if [ -n "$SERVER_PUBKEY" ]; then
-          echo ">>> [$(date +%T)] Got server public key"
-          break
+        if [ -f "config/wg0.json" ]; then
+          SERVER_PUBKEY=$(grep -o '"publicKey":"[^"]*"' config/wg0.json | cut -d'"' -f4)
+          if [ -n "$SERVER_PUBKEY" ]; then
+            echo ">>> [$(date +%T)] Got server public key"
+            break
+          fi
         fi
         sleep 2
       done
