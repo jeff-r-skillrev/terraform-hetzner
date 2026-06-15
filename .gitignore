@@ -68,5 +68,8 @@ hcloud-terraform/utils/wireguard/admin/
 *wireguard*.conf
 admin-wg0.conf
 
+# BUT DO commit source config files in the scripts directory
+!hcloud-terraform/infra/scripts/*.conf
+
 # don't store python dependencies
 .venv
