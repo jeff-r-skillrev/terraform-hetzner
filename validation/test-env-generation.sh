@@ -1,14 +1,16 @@
 #!/bin/bash
 # Test .env file generation from provision-wireguard.sh
-# Specifically validates that password hashes and variables are handled correctly
+# Validates that password hashes and variables are handled correctly
 
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-TEMPLATE_PATH="$REPO_ROOT/hcloud-terraform/infra/cloud-init.yaml.tftpl"
+SCRIPTS_DIR="$REPO_ROOT/hcloud-terraform/infra/scripts"
 
-echo "Testing .env file generation from cloud-init provision script"
+source "$SCRIPT_DIR/lib/render-helpers.sh"
+
+echo "Testing .env file generation from provision-wireguard.sh"
 echo "=============================================================="
 
 # Create test environment
@@ -35,40 +37,49 @@ for password_hash in "${test_hashes[@]}"; do
     echo "Test $test_count: Password hash preservation"
     echo "  Hash: $password_hash"
 
-    # Simulate runtime variables (exactly as they appear in provision script)
+    # Simulate runtime variables
     export SERVER_IP="192.0.2.1"
     export WG_PORT="51820"
     export wg_admin_password_hash="$password_hash"
 
-    # Run the .env creation logic from the provision script
-    # Note: terraform has already substituted ${wg_admin_password_hash} with the actual value
+    # Render the script with terraform variables
+    SCRIPT_RENDERED="$TEST_DIR/provision-wireguard-$test_count.sh"
+    render_wireguard_script "$SCRIPT_RENDERED" "$password_hash" "51820"
+
+    # Source the script (guard at bottom prevents main from running)
+    source "$SCRIPT_RENDERED"
+
+    # Override WG_DIR to use our test directory (script sets it to /mnt/persist/wireguard)
+    export WG_DIR="$TEST_DIR/wireguard"
+
+    # Mock sed -i to handle both macOS (BSD sed) and Linux (GNU sed)
+    # The script uses sed -i which requires different syntax on different systems
+    sed() {
+      # Check if this is a sed -i command
+      local args=("$@")
+      local new_args=()
+      local i=0
+
+      while [ $i -lt ${#args[@]} ]; do
+        if [[ "${args[$i]}" == "-i" ]]; then
+          # Found -i flag; add it with empty string for macOS
+          new_args+=("-i" "")
+          i=$((i + 1))
+        else
+          # Regular argument
+          new_args+=("${args[$i]}")
+          i=$((i + 1))
+        fi
+      done
+
+      # Call sed with the modified arguments
+      command sed "${new_args[@]}"
+    }
+    export -f sed
+
+    # Run write_env_file in the test environment
     cd "$WG_DIR"
-
-    # Simulate terraform template substitution
-    terraform_substituted=$(cat <<'TMPEOF'
-      LANG=en
-      WG_HOST=__SERVER_IP__
-      WG_PORT=__WG_PORT__
-      WG_MTU=1420
-      WG_PERSISTENT_KEEPALIVE=25
-      WG_DEFAULT_DNS=1.1.1.1,8.8.8.8
-      WG_ALLOWED_IPS=10.0.0.0/24
-      UI_LISTEN_PORT=51821
-      PASSWORD_HASH=PLACEHOLDER
-TMPEOF
-)
-
-    # Replace PLACEHOLDER with actual password hash (this is what terraform does)
-    terraform_substituted=$(echo "$terraform_substituted" | sed "s|PLACEHOLDER|$password_hash|g")
-
-    echo "$terraform_substituted" > .env
-
-    # Substitute only runtime variables (PASSWORD_HASH is already set by terraform)
-    sed -i '' "s|__SERVER_IP__|$SERVER_IP|g" .env
-    sed -i '' "s|__WG_PORT__|$WG_PORT|g" .env
-
-    # Remove leading spaces from each line
-    sed -i '' 's/^[[:space:]]*//' .env
+    write_env_file
 
     env_file="$WG_DIR/.env"
 
@@ -104,6 +115,9 @@ TMPEOF
         echo "  Full .env file:"
         cat "$env_file"
     fi
+
+    # Clean up for next iteration
+    rm -f "$env_file"
 done
 
 echo ""

@@ -1,0 +1,204 @@
+#!/bin/bash
+# =============================================================================
+# scripts/provision-wireguard.sh.tftpl
+#
+# Provisions wg-easy (WireGuard + admin UI) on a fresh Hetzner VM.
+# Rendered via terraform templatefile() — ${wg_server_port} and
+# ${wg_admin_password_hash} are TERRAFORM interpolations resolved at render
+# time. By the time this is a file on disk, they are literal bash text.
+#
+# Sourceable for testing: guard at the bottom prevents `main` from running
+# when this file is `source`d (e.g. by validation tests).
+# =============================================================================
+set -euo pipefail
+
+export WG_DIR="/mnt/persist/wireguard"
+export WG_PORT="${wg_server_port}"
+
+log() { echo ">>> [$(date +%T)] $*"; }
+
+# ── (a) Wait for the persistent volume to be mounted ────────────────────────
+wait_for_volume() {
+  log "Waiting for persistent volume..."
+  for attempt in {1..90}; do
+    if mountpoint -q /mnt/persist 2>/dev/null; then
+      log "Volume mounted at /mnt/persist"
+      break
+    fi
+    for d in /mnt/HC_Volume_*; do
+      if [ -d "$d" ] && mountpoint -q "$d" 2>/dev/null; then
+        ln -sfn "$d" /mnt/persist
+        log "Symlinked $d -> /mnt/persist"
+        break 2
+      fi
+    done
+    log "Waiting for volume ($attempt/90)..."
+    sleep 5
+  done
+}
+
+# ── (d) Detect the server's public IP (echoes IP to stdout) ────────────────
+detect_server_ip() {
+  log "Fetching server public IP..." >&2
+  local ip=""
+  for attempt in {1..5}; do
+    ip=$(curl -s http://checkip.amazonaws.com 2>/dev/null | tr -d '\n' || \
+         curl -s http://icanhazip.com 2>/dev/null | tr -d '\n' || \
+         curl -s http://ifconfig.me 2>/dev/null | tr -d '\n' || \
+         echo "")
+    if [ -n "$ip" ]; then
+      log "Server IP: $ip" >&2
+      break
+    fi
+    sleep 2
+  done
+  echo "$ip"
+}
+
+# ── (e)+(f) Write .env and validate it ──────────────────────────────────────
+# Uses $SERVER_IP and $WG_PORT from the environment.
+write_env_file() {
+  cat > .env << 'ENVEOF'
+LANG=en
+WG_HOST=__SERVER_IP__
+WG_PORT=__WG_PORT__
+WG_MTU=1420
+WG_PERSISTENT_KEEPALIVE=25
+WG_DEFAULT_DNS=1.1.1.1,8.8.8.8
+WG_ALLOWED_IPS=10.0.0.0/24
+UI_LISTEN_PORT=51821
+PASSWORD_HASH=${wg_admin_password_hash}
+ENVEOF
+  # Substitute only runtime variables (PASSWORD_HASH is already set by terraform)
+  sed -i "s|__SERVER_IP__|$SERVER_IP|g" .env
+  sed -i "s|__WG_PORT__|$WG_PORT|g" .env
+
+  # Validate .env file
+  if ! grep -q "^WG_HOST=[0-9]" .env; then
+    echo "ERROR: WG_HOST not set correctly in .env"
+    cat .env
+    exit 1
+  fi
+
+  log "Created .env with WG_HOST=$SERVER_IP"
+}
+
+# ── (g) Write docker-compose.yml ────────────────────────────────────────────
+write_compose_file() {
+  cat > docker-compose.yml << 'DCEOF'
+version: '3.8'
+services:
+  wg-easy:
+    image: ghcr.io/wg-easy/wg-easy:latest
+    container_name: wg-easy
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    env_file: .env
+    volumes:
+      - ./config:/etc/wireguard
+      - ./logs:/var/log/wg-easy
+    ports:
+      - "127.0.0.1:51821:51821/tcp"
+      - "$${WG_PORT}:$${WG_PORT}/udp"
+DCEOF
+
+  log "Created docker-compose.yml"
+}
+
+# ── (h) Start wg-easy and wait for config/wg0.json ──────────────────────────
+start_wireguard() {
+  log "Starting wg-easy container..."
+  docker-compose up -d
+
+  log "Waiting for wg-easy initialization..."
+  for attempt in {1..30}; do
+    if [ -f "config/wg0.json" ]; then
+      log "wg0.json created"
+      break
+    fi
+    sleep 2
+  done
+
+  sleep 5
+}
+
+# ── (i) Extract server public key from wg0.json (echoes key to stdout) ─────
+extract_server_pubkey() {
+  log "Extracting server public key..." >&2
+  local pubkey=""
+  for attempt in {1..5}; do
+    if [ -f "config/wg0.json" ]; then
+      pubkey=$(jq -r '.server.publicKey' config/wg0.json 2>/dev/null)
+      if [ -n "$pubkey" ] && [ "$pubkey" != "null" ]; then
+        log "Got server public key: $pubkey" >&2
+        break
+      fi
+    fi
+    sleep 2
+  done
+  echo "$pubkey"
+}
+
+# ── (j) Generate admin peer config ──────────────────────────────────────────
+# $1 = SERVER_PUBKEY. Uses $SERVER_IP and $WG_PORT from the environment.
+generate_admin_config() {
+  local server_pubkey="$1"
+
+  log "Generating admin peer config..."
+  ADMIN_PRIVKEY=$(wg genkey)
+
+  mkdir -p admin
+  cat > admin/wg0.conf << CONFEOF
+[Interface]
+PrivateKey = $ADMIN_PRIVKEY
+Address = 10.0.0.2/32
+DNS = 1.1.1.1,8.8.8.8
+
+[Peer]
+PublicKey = $server_pubkey
+Endpoint = $SERVER_IP:$WG_PORT
+AllowedIPs = 10.0.0.0/24
+PersistentKeepalive = 25
+CONFEOF
+
+  chmod 600 admin/wg0.conf
+  cp admin/wg0.conf /root/wireguard-admin.conf
+  chmod 600 /root/wireguard-admin.conf
+}
+
+# ── Orchestration ────────────────────────────────────────────────────────────
+main() {
+  log "Starting WireGuard provisioning..."
+
+  wait_for_volume
+
+  systemctl start docker 2>/dev/null || true
+  systemctl enable docker
+
+  mkdir -p "$WG_DIR"/{config,admin,logs}
+  log "Created WireGuard directories"
+
+  export SERVER_IP
+  SERVER_IP=$(detect_server_ip)
+
+  cd "$WG_DIR"
+  write_env_file
+  write_compose_file
+  start_wireguard
+
+  local server_pubkey
+  server_pubkey=$(extract_server_pubkey)
+  generate_admin_config "$server_pubkey"
+
+  log "WireGuard setup complete!"
+  log "Hub: 10.0.0.1 | Admin: 10.0.0.2 | Endpoint: $SERVER_IP:$WG_PORT"
+}
+
+if [[ "$${BASH_SOURCE[0]}" == "$${0}" ]]; then
+  main "$@"
+fi

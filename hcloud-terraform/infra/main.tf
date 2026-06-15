@@ -35,6 +35,25 @@ locals {
   ssh_key_id  = terraform.workspace == "default" ? hcloud_ssh_key.research[0].id : data.hcloud_ssh_key.research[0].id
 }
 
+# ── Cloud-init script rendering ──────────────────────────────────────────────
+#
+# Render the three write_files payloads independently. The provisioning script
+# is the only one with terraform variables — it gets its own templatefile()
+# pass with the same two vars the outer cloud-init template uses. The other two
+# are 100% static and read via file() (NOT templatefile()) so terraform never
+# scans them for ${...} — this guarantees bash ${...} and tmux #{...} syntax
+# in those files cannot be misinterpreted as terraform interpolation.
+
+locals {
+  provision_wireguard_script = templatefile("${path.module}/scripts/provision-wireguard.sh.tftpl", {
+    wg_admin_password_hash = var.wg_admin_password_hash
+    wg_server_port         = var.wg_server_port
+  })
+
+  provision_shell_script = file("${path.module}/scripts/provision-shell.sh")
+  sshd_hardening_conf     = file("${path.module}/scripts/sshd-hardening.conf")
+}
+
 # ── SSH Key ───────────────────────────────────────────────────────────────────
 #
 # Hetzner enforces uniqueness on the public key value, so we can only register
@@ -116,8 +135,10 @@ resource "hcloud_server" "research" {
   }
 
   user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    wg_admin_password_hash = var.wg_admin_password_hash
-    wg_server_port         = var.wg_server_port
+    provision_wireguard_script = local.provision_wireguard_script
+    provision_shell_script     = local.provision_shell_script
+    sshd_hardening_conf        = local.sshd_hardening_conf
+    wg_server_port             = var.wg_server_port
   })
 
   labels = {

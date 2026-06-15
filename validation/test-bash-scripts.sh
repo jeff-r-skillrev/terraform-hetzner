@@ -1,144 +1,86 @@
 #!/bin/bash
-# Test bash scripts extracted from cloud-init template
-# Validates syntax and variable expansion without running actual commands
+# Test bash scripts in cloud-init template — syntax check + expansion validation
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-TEMPLATE_PATH="$REPO_ROOT/hcloud-terraform/infra/cloud-init.yaml.tftpl"
+SCRIPTS_DIR="$REPO_ROOT/hcloud-terraform/infra/scripts"
+
+source "$SCRIPT_DIR/lib/render-helpers.sh"
 
 echo "=== Testing bash scripts in cloud-init template ==="
 echo
 
-# Extract and test provision-wireguard.sh
-echo ">>> Extracting provision-wireguard.sh..."
-WIREGUARD_SCRIPT=$(sed -n '/path: \/root\/provision-wireguard\.sh/,/^  - path:/p' "$TEMPLATE_PATH" | sed '$d')
-WIREGUARD_SCRIPT=$(echo "$WIREGUARD_SCRIPT" | sed 's/^    content: |//' | sed 's/^      //')
+# Create temp directory for rendered scripts
+TMPDIR=$(mktemp -d)
+trap "rm -rf $TMPDIR" EXIT
 
-# Replace terraform template variables
-WIREGUARD_SCRIPT=$(echo "$WIREGUARD_SCRIPT" | sed 's/${wg_server_port}/51820/g')
-WIREGUARD_SCRIPT=$(echo "$WIREGUARD_SCRIPT" | sed 's/${wg_admin_password_hash}/$2b$12$dummy.hash/g')
+# ── Test provision-wireguard.sh ────────────────────────────────────────────
+echo ">>> Testing provision-wireguard.sh..."
 
-# Create a test version with mocked external commands
-TEST_WIREGUARD=$(cat << 'TESTEOF'
-#!/bin/bash
-set -euo pipefail
+# Render with dummy terraform values
+render_wireguard_script "$TMPDIR/provision-wireguard.sh" \
+    '$2b$12$dummy.hash.value.here.aaaaaaaaaaaaaaaaaaa' \
+    '51820'
 
-# Mock external commands
-mountpoint() { return 0; }
-curl() { echo "192.0.2.1"; }
-systemctl() { :; }
-mkdir() { :; }
-envsubst() { cat; }
-docker-compose() { :; }
-jq() { echo '{"server":{"publicKey":"AAAAAAAABBBBBBBBCCCCCCCCDDDDDDDDEEEEEEEE="}}'; }
-chmod() { :; }
-cp() { :; }
-wg() {
-  if [[ "$1" == "genkey" ]]; then
-    echo "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBB=="
-  fi
-}
-
-TESTEOF
-echo "$WIREGUARD_SCRIPT"
-)
-
-# Syntax check
-echo ">>> Checking bash syntax..."
-if bash -n <(echo "$TEST_WIREGUARD") 2>&1; then
+# Bash syntax check
+if bash -n "$TMPDIR/provision-wireguard.sh" 2>/dev/null; then
   echo "✓ Syntax OK"
 else
   echo "✗ Syntax error in provision-wireguard.sh"
   exit 1
 fi
 
-# Check for quoted heredoc (common regression)
-echo ">>> Checking for heredoc quoting issues..."
-if grep -q "cat > admin/wg0.conf << 'CONFEOF'" "$TEMPLATE_PATH"; then
-  echo "✗ REGRESSION: Heredoc uses quoted 'CONFEOF' which prevents variable expansion!"
-  echo "   This causes \$VARIABLE to be written literally instead of expanded"
-  exit 1
-else
-  echo "✓ No quoted heredoc issues"
+# Shellcheck (if available, non-fatal if absent)
+if command -v shellcheck >/dev/null 2>&1; then
+  if shellcheck -S warning "$TMPDIR/provision-wireguard.sh" 2>&1 | grep -qv "^$"; then
+    # shellcheck found warnings/errors but we only warn, not fail
+    echo "⚠ Shellcheck warnings (non-fatal):"
+    shellcheck -S warning "$TMPDIR/provision-wireguard.sh" || true
+  else
+    echo "✓ Shellcheck passed"
+  fi
 fi
 
-# Check for double-dollar escaping (causes PID substitution)
-echo ">>> Checking for incorrect $$ escaping..."
-if grep -q "PrivateKey = \$\$" "$TEMPLATE_PATH"; then
-  echo "✗ REGRESSION: Using \$\$ instead of single \$!"
-  echo "   In bash, \$\$ expands to the process ID, not a literal \$"
-  echo "   Result: PrivateKey = 12345ADMIN_PRIVKEY (where 12345 is the PID)"
-  exit 1
+# ── Test provision-shell.sh ────────────────────────────────────────────────
+echo ">>> Testing provision-shell.sh..."
+
+# No substitution needed — it's pure bash
+if bash -n "$SCRIPTS_DIR/provision-shell.sh" 2>/dev/null; then
+  echo "✓ Syntax OK"
 else
-  echo "✓ No \$\$ escaping issues"
-fi
-
-# Test variable expansion by running a subset with tracing
-echo ">>> Checking variable expansion in heredocs..."
-EXPANSION_TEST=$(cat << 'EXPANDEOF'
-#!/bin/bash
-set -euo pipefail
-
-# Mock functions
-wg() { echo "ValidPrivateKey12345678901234567890AB=="; }
-
-export WG_DIR="/tmp/test-wg"
-export WG_PORT="51820"
-export SERVER_IP="192.0.2.1"
-ADMIN_PRIVKEY=$(wg genkey)
-SERVER_PUBKEY="ValidServerKey1234567890123456789012AB=="
-
-# Test the heredoc that was causing issues
-mkdir -p admin
-cat > admin/wg0.conf << CONFEOF
-[Interface]
-PrivateKey = $ADMIN_PRIVKEY
-Address = 10.0.0.2/32
-DNS = 1.1.1.1,8.8.8.8
-
-[Peer]
-PublicKey = $SERVER_PUBKEY
-Endpoint = $SERVER_IP:$WG_PORT
-AllowedIPs = 10.0.0.0/24
-PersistentKeepalive = 25
-CONFEOF
-
-# Check that variables were actually expanded
-if grep -q "PrivateKey = ValidPrivateKey" admin/wg0.conf; then
-  echo "✓ PrivateKey expanded correctly"
-else
-  echo "✗ PrivateKey NOT expanded (contains literal \$ADMIN_PRIVKEY)"
-  cat admin/wg0.conf
+  echo "✗ Syntax error in provision-shell.sh"
   exit 1
 fi
 
-if grep -q "PublicKey = ValidServerKey" admin/wg0.conf; then
-  echo "✓ PublicKey expanded correctly"
+# Shellcheck (if available, non-fatal if absent)
+if command -v shellcheck >/dev/null 2>&1; then
+  if shellcheck -S warning "$SCRIPTS_DIR/provision-shell.sh" 2>&1 | grep -qv "^$"; then
+    echo "⚠ Shellcheck warnings (non-fatal):"
+    shellcheck -S warning "$SCRIPTS_DIR/provision-shell.sh" || true
+  else
+    echo "✓ Shellcheck passed"
+  fi
+fi
+
+# ── Regression checks ──────────────────────────────────────────────────────
+echo ">>> Regression checks..."
+
+# Ensure the unquoted CONFEOF heredoc is still present and unquoted
+if grep -q "cat > admin/wg0.conf << CONFEOF" "$SCRIPTS_DIR/provision-wireguard.sh.tftpl"; then
+  echo "✓ Unquoted CONFEOF heredoc present"
 else
-  echo "✗ PublicKey NOT expanded"
-  cat admin/wg0.conf
+  echo "✗ CONFEOF heredoc is missing or quoted"
   exit 1
 fi
 
-if grep -q "Endpoint = 192.0.2.1:51820" admin/wg0.conf; then
-  echo "✓ Endpoint expanded correctly"
-else
-  echo "✗ Endpoint NOT expanded"
-  cat admin/wg0.conf
+# Ensure no dangerous $$ escaping was reintroduced
+if grep -E '\$\$ADMIN_PRIVKEY|\$\$SERVER_PUBKEY|\$\$SERVER_IP' "$SCRIPTS_DIR/provision-wireguard.sh.tftpl" >/dev/null; then
+  echo "✗ Dangerous \$\$ escaping detected (would break bash expansion)"
   exit 1
-fi
-
-rm -rf admin
-EXPANDEOF
-)
-
-if bash <(echo "$EXPANSION_TEST") 2>&1; then
-  echo "✓ Variable expansion OK"
 else
-  echo "✗ Variable expansion failed"
-  exit 1
+  echo "✓ No dangerous \$\$ escaping"
 fi
 
 echo
