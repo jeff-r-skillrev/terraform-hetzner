@@ -129,3 +129,32 @@ echo ">>> [$(date +%T)] Created .env with WG_HOST=$SERVER_IP"
 ```
 
 Makes cloud-init logs easier to follow when troubleshooting.
+
+---
+
+## Cloud-Init Template Validation
+
+### ✅ Validate `cloud-init.yaml.tftpl` before applying Terraform
+
+**Problem:** Invalid YAML in cloud-init templates fails silently during provisioning, leaving you with a broken VM.
+
+**Solution:** Use the validation script before `terraform apply`:
+
+```bash
+bash validation/test-cloud-init.sh
+```
+
+This script:
+- Parses the template file as YAML (after Terraform variable substitution)
+- Validates heredoc syntax doesn't break cloud-init
+- Checks required provisioning scripts are present
+
+**Common issues prevented:**
+- Unquoted heredoc delimiters confusing YAML parser
+- Broken indentation in literal blocks (`content: |`)
+- Missing required `write_files` entries
+
+**When to run:**
+- Before any changes to `hcloud-terraform/infra/cloud-init.yaml.tftpl`
+- Before `terraform apply` on a new or modified VPS
+- After any edits to heredocs or shell scripts in the template

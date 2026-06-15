@@ -90,22 +90,23 @@ write_files:
 
       # Create .env file with all wg-easy environment variables
       cd $WG_DIR
-      cat > .env << ENVEOF
-LANG=en
-WG_HOST=$SERVER_IP
-WG_PORT=$WG_PORT
-WG_MTU=1420
-WG_PERSISTENT_KEEPALIVE=25
-WG_DEFAULT_DNS=1.1.1.1,8.8.8.8
-WG_ALLOWED_IPS=10.0.0.0/24
-UI_LISTEN_PORT=51821
-PASSWORD_HASH=${wg_admin_password_hash}
-ENVEOF
+      cat > .env << 'ENVEOF'
+      LANG=en
+      WG_HOST=$SERVER_IP
+      WG_PORT=$WG_PORT
+      WG_MTU=1420
+      WG_PERSISTENT_KEEPALIVE=25
+      WG_DEFAULT_DNS=1.1.1.1,8.8.8.8
+      WG_ALLOWED_IPS=10.0.0.0/24
+      UI_LISTEN_PORT=51821
+      PASSWORD_HASH=${wg_admin_password_hash}
+      ENVEOF
+      envsubst < .env > .env.tmp && mv .env.tmp .env
 
       echo ">>> [$(date +%T)] Created .env with WG_HOST=$SERVER_IP"
 
       # Create docker-compose.yml (all env vars loaded from .env)
-      cat > docker-compose.yml << DCEOF
+      cat > docker-compose.yml << 'DCEOF'
       version: '3.8'
       services:
         wg-easy:
@@ -124,7 +125,7 @@ ENVEOF
             - ./logs:/var/log/wg-easy
           ports:
             - "127.0.0.1:51821:51821/tcp"
-            - "\${WG_PORT}:\${WG_PORT}/udp"
+            - "${WG_PORT}:${WG_PORT}/udp"
       DCEOF
 
       echo ">>> [$(date +%T)] Created docker-compose.yml"
@@ -164,7 +165,7 @@ ENVEOF
       ADMIN_PRIVKEY=$(wg genkey)
 
       mkdir -p admin
-      cat > admin/wg0.conf << CONFEOF
+      cat > admin/wg0.conf << 'CONFEOF'
       [Interface]
       PrivateKey = $ADMIN_PRIVKEY
       Address = 10.0.0.2/32

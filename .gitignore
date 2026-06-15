@@ -67,3 +67,6 @@ hcloud-terraform/utils/wireguard/logs/
 hcloud-terraform/utils/wireguard/admin/
 *wireguard*.conf
 admin-wg0.conf
+
+# don't store python dependencies
+.venv
