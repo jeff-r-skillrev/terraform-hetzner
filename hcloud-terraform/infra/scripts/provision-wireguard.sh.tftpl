@@ -144,13 +144,14 @@ extract_server_pubkey() {
   echo "$pubkey"
 }
 
-# ── (j) Generate admin peer config ──────────────────────────────────────────
+# ── (j) Generate admin peer config with PSK ────────────────────────────────
 # $1 = SERVER_PUBKEY. Uses $SERVER_IP and $WG_PORT from the environment.
 generate_admin_config() {
   local server_pubkey="$1"
 
-  log "Generating admin peer config..."
+  log "Generating admin peer config with pre-shared key..."
   ADMIN_PRIVKEY=$(wg genkey)
+  ADMIN_PSK=$(wg genpsk)
 
   mkdir -p admin
   cat > admin/wg0.conf << CONFEOF
@@ -161,6 +162,7 @@ DNS = 1.1.1.1,8.8.8.8
 
 [Peer]
 PublicKey = $server_pubkey
+PresharedKey = $ADMIN_PSK
 Endpoint = $SERVER_IP:$WG_PORT
 AllowedIPs = 10.8.0.0/24
 PersistentKeepalive = 25
@@ -169,6 +171,54 @@ CONFEOF
   chmod 600 admin/wg0.conf
   cp admin/wg0.conf /root/wireguard-admin.conf
   chmod 600 /root/wireguard-admin.conf
+
+  # Store admin PSK and pubkey for server-side peer registration
+  ADMIN_PUBKEY=$(echo "$ADMIN_PRIVKEY" | wg pubkey)
+  echo "$ADMIN_PSK" > admin/presharedkey
+  echo "$ADMIN_PUBKEY" > admin/publickey
+  chmod 600 admin/{presharedkey,publickey}
+}
+
+# ── (k) Register admin peer on server with PSK ────────────────────────────
+# Adds the admin as a peer to the server's WireGuard config with the PSK.
+# Uses globals: ADMIN_PUBKEY, ADMIN_PSK (set by generate_admin_config).
+register_admin_peer_on_server() {
+  log "Registering admin peer on server with PSK..."
+
+  # Wait for wg-easy API to be ready (can take a few seconds)
+  for attempt in {1..10}; do
+    if curl -s http://localhost:51821 > /dev/null 2>&1; then
+      log "wg-easy API ready"
+      break
+    fi
+    log "Waiting for wg-easy API... ($attempt/10)"
+    sleep 2
+  done
+
+  # Add admin peer via wg command (updates both kernel and persisted config)
+  wg set wg0 peer "$ADMIN_PUBKEY" preshared-key <(echo -n "$ADMIN_PSK") allowed-ips 10.8.0.2/32
+
+  # Persist to wg0.json by adding to the peers array
+  # wg-easy reads/writes this file, so we insert the admin peer here
+  local admin_peer_json=$(jq -n \
+    --arg name "admin" \
+    --arg publicKey "$ADMIN_PUBKEY" \
+    --arg presharedKey "$ADMIN_PSK" \
+    '{
+      name: $name,
+      publicKey: $publicKey,
+      presharedKey: $presharedKey,
+      allowedIps: "10.8.0.2/32",
+      persistentKeepalive: null
+    }')
+
+  # Check if admin peer already exists, if not add it
+  if ! jq -e '.peers[] | select(.publicKey == "'$ADMIN_PUBKEY'")' config/wg0.json > /dev/null 2>&1; then
+    jq ".peers += [$admin_peer_json]" config/wg0.json > config/wg0.json.tmp && mv config/wg0.json.tmp config/wg0.json
+    log "Added admin peer to wg0.json"
+  else
+    log "Admin peer already exists in wg0.json"
+  fi
 }
 
 # ── Orchestration ────────────────────────────────────────────────────────────
@@ -194,6 +244,7 @@ main() {
   local server_pubkey
   server_pubkey=$(extract_server_pubkey)
   generate_admin_config "$server_pubkey"
+  register_admin_peer_on_server
 
   log "WireGuard setup complete!"
   log "Hub: 10.8.0.1 | Admin: 10.8.0.2 | Endpoint: $SERVER_IP:$WG_PORT"
