@@ -95,8 +95,8 @@ write_files:
       cd $WG_DIR
       cat > .env << 'ENVEOF'
       LANG=en
-      WG_HOST=$SERVER_IP
-      WG_PORT=$WG_PORT
+      WG_HOST=__SERVER_IP__
+      WG_PORT=__WG_PORT__
       WG_MTU=1420
       WG_PERSISTENT_KEEPALIVE=25
       WG_DEFAULT_DNS=1.1.1.1,8.8.8.8
@@ -104,7 +104,9 @@ write_files:
       UI_LISTEN_PORT=51821
       PASSWORD_HASH=${wg_admin_password_hash}
       ENVEOF
-      envsubst < .env > .env.tmp && mv .env.tmp .env
+      # Substitute only runtime variables (PASSWORD_HASH is already set by terraform)
+      sed -i "s|__SERVER_IP__|$SERVER_IP|g" .env
+      sed -i "s|__WG_PORT__|$WG_PORT|g" .env
 
       # Validate .env file
       if ! grep -q "^WG_HOST=[0-9]" .env; then
