@@ -65,7 +65,7 @@ WG_PORT=__WG_PORT__
 WG_MTU=1420
 WG_PERSISTENT_KEEPALIVE=25
 WG_DEFAULT_DNS=1.1.1.1,8.8.8.8
-WG_ALLOWED_IPS=10.0.0.0/24
+WG_ALLOWED_IPS=10.8.0.0/24
 UI_LISTEN_PORT=51821
 PASSWORD_HASH=${wg_admin_password_hash}
 ENVEOF
@@ -156,13 +156,13 @@ generate_admin_config() {
   cat > admin/wg0.conf << CONFEOF
 [Interface]
 PrivateKey = $ADMIN_PRIVKEY
-Address = 10.0.0.2/32
+Address = 10.8.0.2/32
 DNS = 1.1.1.1,8.8.8.8
 
 [Peer]
 PublicKey = $server_pubkey
 Endpoint = $SERVER_IP:$WG_PORT
-AllowedIPs = 10.0.0.0/24
+AllowedIPs = 10.8.0.0/24
 PersistentKeepalive = 25
 CONFEOF
 
@@ -196,7 +196,7 @@ main() {
   generate_admin_config "$server_pubkey"
 
   log "WireGuard setup complete!"
-  log "Hub: 10.0.0.1 | Admin: 10.0.0.2 | Endpoint: $SERVER_IP:$WG_PORT"
+  log "Hub: 10.8.0.1 | Admin: 10.8.0.2 | Endpoint: $SERVER_IP:$WG_PORT"
 }
 
 if [[ "$${BASH_SOURCE[0]}" == "$${0}" ]]; then
