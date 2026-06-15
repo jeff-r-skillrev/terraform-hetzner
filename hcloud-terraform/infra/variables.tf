@@ -48,7 +48,7 @@ variable "owner_tag" {
 }
 
 variable "wg_admin_password" {
-  description = "WireGuard admin panel password (plaintext; used to generate hash)"
+  description = "WireGuard admin panel password (plaintext, human-memorable). NOT passed to templatefile() — documents the plaintext counterpart of wg_admin_password_hash for operator reference (e.g. the password you type into the wg-easy admin UI). Generate the hash via: echo -n \"$wg_admin_password\" | mkpasswd -m bcrypt -R 10"
   type        = string
   sensitive   = true
 }
