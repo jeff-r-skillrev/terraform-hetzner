@@ -125,7 +125,7 @@ write_files:
             - ./logs:/var/log/wg-easy
           ports:
             - "127.0.0.1:51821:51821/tcp"
-            - "${WG_PORT}:${WG_PORT}/udp"
+            - "$${WG_PORT}:$${WG_PORT}/udp"
       DCEOF
 
       echo ">>> [$(date +%T)] Created docker-compose.yml"
