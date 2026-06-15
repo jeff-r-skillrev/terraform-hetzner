@@ -73,13 +73,38 @@ write_files:
       mkdir -p $WG_DIR/{config,admin,logs}
       echo ">>> [$(date +%T)] Created WireGuard directories"
 
-      # Create .env file with password hash (avoids docker-compose interpolation)
-      cd $WG_DIR
-      cat > .env << 'ENVEOF'
-      PASSWORD_HASH=${wg_admin_password_hash}
-      ENVEOF
+      # Get server IP before configuring wg-easy
+      echo ">>> [$(date +%T)] Fetching server public IP..."
+      SERVER_IP=""
+      for attempt in {1..5}; do
+        SERVER_IP=$(curl -s http://checkip.amazonaws.com 2>/dev/null | tr -d '\n' || \
+                    curl -s http://icanhazip.com 2>/dev/null | tr -d '\n' || \
+                    curl -s http://ifconfig.me 2>/dev/null | tr -d '\n' || \
+                    echo "")
+        if [ -n "$SERVER_IP" ]; then
+          echo ">>> [$(date +%T)] Server IP: $SERVER_IP"
+          break
+        fi
+        sleep 2
+      done
 
-      # Create docker-compose.yml
+      # Create .env file with all wg-easy environment variables
+      cd $WG_DIR
+      cat > .env << ENVEOF
+LANG=en
+WG_HOST=$SERVER_IP
+WG_PORT=$WG_PORT
+WG_MTU=1420
+WG_PERSISTENT_KEEPALIVE=25
+WG_DEFAULT_DNS=1.1.1.1,8.8.8.8
+WG_ALLOWED_IPS=10.0.0.0/24
+UI_LISTEN_PORT=51821
+PASSWORD_HASH=${wg_admin_password_hash}
+ENVEOF
+
+      echo ">>> [$(date +%T)] Created .env with WG_HOST=$SERVER_IP"
+
+      # Create docker-compose.yml (all env vars loaded from .env)
       cat > docker-compose.yml << DCEOF
       version: '3.8'
       services:
@@ -93,22 +118,13 @@ write_files:
           sysctls:
             - net.ipv4.ip_forward=1
             - net.ipv4.conf.all.src_valid_mark=1
-          environment:
-            LANG: en
-            WG_HOST: 0.0.0.0
-            WG_PORT: $${WG_PORT}
-            WG_MTU: 1420
-            WG_PERSISTENT_KEEPALIVE: 25
-            WG_DEFAULT_DNS: 1.1.1.1,8.8.8.8
-            WG_ALLOWED_IPS: 10.0.0.0/24
-            UI_LISTEN_PORT: 51821
           env_file: .env
           volumes:
             - ./config:/etc/wireguard
             - ./logs:/var/log/wg-easy
           ports:
             - "127.0.0.1:51821:51821/tcp"
-            - "$${WG_PORT}:$${WG_PORT}/udp"
+            - "\${WG_PORT}:\${WG_PORT}/udp"
       DCEOF
 
       echo ">>> [$(date +%T)] Created docker-compose.yml"
@@ -139,21 +155,6 @@ write_files:
             echo ">>> [$(date +%T)] Got server public key: $SERVER_PUBKEY"
             break
           fi
-        fi
-        sleep 2
-      done
-
-      # Get server IP
-      echo ">>> [$(date +%T)] Fetching server public IP..."
-      SERVER_IP=""
-      for attempt in {1..5}; do
-        SERVER_IP=$(curl -s http://checkip.amazonaws.com 2>/dev/null | tr -d '\n' || \
-                    curl -s http://icanhazip.com 2>/dev/null | tr -d '\n' || \
-                    curl -s http://ifconfig.me 2>/dev/null | tr -d '\n' || \
-                    echo "")
-        if [ -n "$SERVER_IP" ]; then
-          echo ">>> [$(date +%T)] Server IP: $SERVER_IP"
-          break
         fi
         sleep 2
       done
