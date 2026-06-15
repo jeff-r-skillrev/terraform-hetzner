@@ -167,13 +167,13 @@ write_files:
       mkdir -p admin
       cat > admin/wg0.conf << CONFEOF
       [Interface]
-      PrivateKey = $$ADMIN_PRIVKEY
+      PrivateKey = $ADMIN_PRIVKEY
       Address = 10.0.0.2/32
       DNS = 1.1.1.1,8.8.8.8
 
       [Peer]
-      PublicKey = $$SERVER_PUBKEY
-      Endpoint = $$SERVER_IP:$$WG_PORT
+      PublicKey = $SERVER_PUBKEY
+      Endpoint = $SERVER_IP:$WG_PORT
       AllowedIPs = 10.0.0.0/24
       PersistentKeepalive = 25
       CONFEOF

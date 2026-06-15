@@ -64,6 +64,17 @@ else
   echo "✓ No quoted heredoc issues"
 fi
 
+# Check for double-dollar escaping (causes PID substitution)
+echo ">>> Checking for incorrect $$ escaping..."
+if grep -q "PrivateKey = \$\$" "$TEMPLATE_PATH"; then
+  echo "✗ REGRESSION: Using \$\$ instead of single \$!"
+  echo "   In bash, \$\$ expands to the process ID, not a literal \$"
+  echo "   Result: PrivateKey = 12345ADMIN_PRIVKEY (where 12345 is the PID)"
+  exit 1
+else
+  echo "✓ No \$\$ escaping issues"
+fi
+
 # Test variable expansion by running a subset with tracing
 echo ">>> Checking variable expansion in heredocs..."
 EXPANSION_TEST=$(cat << 'EXPANDEOF'
