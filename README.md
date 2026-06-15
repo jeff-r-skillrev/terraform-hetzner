@@ -2,6 +2,18 @@
 
 Terraform-managed WireGuard VPN server on Hetzner Cloud for secure, persistent access to home-based services (like Ollama) from remote locations (e.g., India). Hub-and-spoke topology with split tunneling for low bandwidth costs.
 
+## Why This Project?
+
+You run compute-intensive services at home (e.g., Ollama for LLM inference) that you want to access from remote offices or travel. **Direct access over the internet is insecure** — you'd expose your home IP and services to the world. **A cloud-based VPN hub solves this:**
+
+- **Secure tunnel**: All traffic between home and remote devs is encrypted via WireGuard
+- **Persistent endpoint**: A stable cloud IP replaces your dynamic home IP; devs connect to the VPN hub, not directly to your home
+- **Low cost**: Split tunneling means devs use their local ISP for regular traffic; only internal service access routes through the VPN (minimal bandwidth)
+- **Infrastructure-as-code**: Terraform automates provisioning, so you can tear down and recreate the server without losing configs or IP address
+- **Self-contained**: Uses only Hetzner Cloud (VPS + persistent volume) and wg-easy (open-source Docker image); no external VPN service subscriptions
+
+This is ideal for small teams, hobby projects, or when you need both **security** and **cost efficiency**.
+
 ---
 
 ## Architecture Overview
@@ -264,32 +276,49 @@ The VM comes back up in ~2-5 minutes with the same WireGuard configs (no re-conf
 
 ## Architecture & File Structure
 
+The project is organized into two Terraform modules: **shared** (persistent state) and **infra** (ephemeral compute). This separation means you can destroy and recreate the VPS without losing WireGuard peer configurations.
+
 ```
 hcloud-terraform/
-├── shared/                      # Persistent volume (survives VM teardowns)
-│   ├── main.tf
-│   ├── variables.tf
-│   └── outputs.tf
+├── shared/                      # Persistent Hetzner volume (data layer)
+│   ├── main.tf                  # Defines the persistent volume resource
+│   ├── variables.tf             # Volume size, labels, etc.
+│   └── outputs.tf               # Volume ID for infra to mount
+│   
+│   Purpose: Create a persistent block storage volume that survives
+│   VM teardowns. All WireGuard configs are stored here.
 │
-├── infra/                       # The WireGuard VPS (ephemeral)
-│   ├── main.tf                  # Server, firewall, IP allocation
-│   ├── variables.tf             # WireGuard-specific vars
-│   ├── outputs.tf               # Admin UI, config download, etc.
-│   ├── cloud-init.yaml.tftpl    # First-boot provisioning script
-│   │   └── Contains:
-│   │       • Docker installation
-│   │       • WireGuard key generation
-│   │       • wg-easy container startup
-│   │       • Admin peer auto-generation
-│   │       • Password hashing (bcrypt)
-│   └── terraform.auto.tfvars.example
+├── infra/                       # Ephemeral VPS + provisioning (compute layer)
+│   ├── main.tf                  # Server resource, network, SSH key, firewall rules
+│   ├── variables.tf             # Hetzner token, SSH pubkey, VPN params (port, admin password)
+│   ├── outputs.tf               # Server IP, SSH tunnel command, config download command
+│   ├── cloud-init.yaml.tftpl    # First-boot provisioning template
+│   │   ├── Installs Docker and WireGuard tools
+│   │   ├── Generates WireGuard server keys
+│   │   ├── Starts wg-easy container with admin UI
+│   │   ├── Auto-generates the admin peer (10.0.0.2)
+│   │   ├── Hashes the admin password (bcrypt)
+│   │   └── Mounts the persistent volume at /mnt/persist
+│   │
+│   ├── terraform.auto.tfvars.example  # Template for your secrets (token, SSH key, password)
+│   └── terraform.tfstate              # Local state (git-ignored for safety)
 │
 ├── utils/
 │   └── wireguard/
-│       └── README.md            # Detailed admin guide
+│       └── README.md            # Detailed operational guide (admin tasks, troubleshooting)
 │
-└── .gitignore                   # Ignores .conf files, secrets, etc.
+└── .gitignore                   # Protects .tfstate, .conf files, secrets
 ```
+
+### How It Works Together
+
+1. **shared/main.tf** creates a persistent Hetzner volume (e.g., `wg-persist-01`)
+2. **infra/main.tf** provisions a VPS and:
+   - Attaches the persistent volume from shared/
+   - Runs cloud-init (from cloud-init.yaml.tftpl) on first boot
+   - cloud-init starts the wg-easy Docker container, which reads/writes peer configs to the mounted volume
+3. When you run `terraform destroy`, the VPS is deleted but the volume (and all WireGuard configs) remain
+4. When you run `terraform apply` again, a new VPS comes up, re-attaches the same volume, and all peers are back online
 
 ### Terraform Workspaces (Multiple VPNs)
 
