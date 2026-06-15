@@ -88,6 +88,9 @@ write_files:
         sleep 2
       done
 
+      # Export for envsubst
+      export SERVER_IP
+
       # Create .env file with all wg-easy environment variables
       cd $WG_DIR
       cat > .env << 'ENVEOF'
@@ -102,6 +105,13 @@ write_files:
       PASSWORD_HASH=${wg_admin_password_hash}
       ENVEOF
       envsubst < .env > .env.tmp && mv .env.tmp .env
+
+      # Validate .env file
+      if ! grep -q "^WG_HOST=[0-9]" .env; then
+        echo "ERROR: WG_HOST not set correctly in .env"
+        cat .env
+        exit 1
+      fi
 
       echo ">>> [$(date +%T)] Created .env with WG_HOST=$SERVER_IP"
 
