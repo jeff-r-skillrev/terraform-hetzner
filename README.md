@@ -24,7 +24,7 @@ This is ideal for small teams, hobby projects, or when you need both **security*
                     │  • WireGuard on 51820/UDP       │
                     │  • Internal IP: 10.0.0.1        │
                     │  • wg-easy web UI: localhost    │
-                    │  • Cost: ~$5-10/month           │
+                    │  • Cost: ~$5/month              │
                     └────────────────┬────────────────┘
                                      │ (VPN Tunnel)
                     ┌────────────────┼────────────────┐
