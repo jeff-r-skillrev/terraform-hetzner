@@ -17,7 +17,7 @@ variable "vm_name" {
 variable "location" {
   description = "Hetzner datacenter — must match the infra/ config so the volume can attach."
   type        = string
-  default     = "ash"
+  default     = "nbg1"
 
   validation {
     condition     = contains(["ash", "hil", "nbg1", "fsn1", "hel1", "sin"], var.location)

@@ -17,18 +17,18 @@ variable "vm_name" {
 variable "server_type" {
   description = "Hetzner server type"
   type        = string
-  default     = "cpx21"
+  default     = "cx23"
 
   validation {
-    condition     = contains(["cpx21", "cax11"], var.server_type)
-    error_message = "Choose one of: cpx21 (budget x86) 2 vCPU shared, 4GB RAM, ~$5/mo, cax11 (budget ARM) 2 vCPU shared, 4GB RAM, ~$5/mo."
+    condition     = contains(["cx23", "cax11"], var.server_type)
+    error_message = "Choose one of: cx23 (standard x86) 2 vCPU shared, 4GB RAM, ~$6/mo, cax11 (budget ARM) 2 vCPU shared, 4GB RAM, ~$6/mo."
   }
 }
 
 variable "location" {
   description = "Hetzner datacenter. ash = Ashburn VA (best for US East). hil = Hillsboro OR (US West)."
   type        = string
-  default     = "ash"
+  default     = "nbg1" # cx is only available in nbg1
 
   validation {
     condition     = contains(["ash", "hil", "nbg1", "fsn1", "hel1", "sin"], var.location)
